@@ -1,0 +1,195 @@
+---
+title: "Room_analysis"
+output: html_document
+---
+
+```{r}
+# loading libraries
+install.packages("rjson")
+install.packages("jsonlite")
+library(tidyverse)
+library(rjson)
+library(jsonlite)
+library(dplyr)
+library(jsonlite)
+library(sf)
+library(dplyr)
+library(purrr)
+library(ggplot2)
+```
+
+```{r}
+# loading data
+# converting list to dataframe
+plan <- fromJSON("data/NMFA_3floors_plan.json", simplifyVector = FALSE)
+
+```
+
+```{r}
+# combine coordinates of walls
+walls <- map_dfr(plan$floors, function(floors) {
+  map_dfr(floors$walls, function(wall) {
+    p1 <- wall$position[[1]]
+    p2 <- wall$position[[2]]
+    
+    painting_ids <- if (length(wall$paintings) == 0) {
+      character(0)
+    } else {
+      map_chr(wall$paintings, "id")
+    }
+    
+    tibble(
+      floor = floors$number,
+      wall_id = wall$id,
+      x1 = p1$x,
+      y1 = p1$y,
+      x2 = p2$x,
+      y2 = p2$y,
+      painting_ids = list(painting_ids),
+      type = "wall"
+    )
+  })
+}) %>%
+  rowwise() %>%
+  mutate(
+    geometry = st_sfc(
+      st_linestring(matrix(c(x1, y1, x2, y2), ncol = 2, byrow = TRUE))
+    )
+  ) %>%
+  ungroup() %>%
+  st_as_sf(crs = NA)
+
+# combine coordinates of background objects
+background <- map_dfr(plan$floors, function(floors) {
+  map_dfr(floors$background, function(background) {
+    p1 <- background$formToDraw[[1]]
+    p2 <- background$formToDraw[[2]]
+    
+    tibble(
+      floor = floors$number,
+      background_id = background$id,
+      type = background$type,
+      x1 = p1$x,
+      y1 = p1$y,
+      x2 = p2$x,
+      y2 = p2$y
+    )
+  })
+}) %>%
+  rowwise() %>%
+  mutate(
+    geometry = st_sfc(
+      st_linestring(matrix(c(x1, y1, x2, y2), ncol = 2, byrow = TRUE))
+    )
+  ) %>%
+  ungroup() %>%
+  st_as_sf(crs = NA)
+
+# combine coordinates of walls and background into one dataframe adding background objects as new rows
+combined_df <- bind_rows(
+  list(walls, background)
+)
+```
+
+```{r}
+# plot
+floor_id <- 0
+
+ggplot() +
+  geom_sf(data = combined_df %>% filter(floor == floor_id),
+          linewidth = 0.25) +
+  geom_text(
+    data = combined_df %>%
+      filter(floor == floor_id) %>%
+      mutate(
+        mx = (x1 + x2) / 2,
+        my = (y1 + y2) / 2
+      ),
+    aes(x = mx, y = my, label = wall_id),
+    size = 1.8
+  ) +
+  scale_x_reverse() +
+  scale_y_reverse() +
+  coord_sf(expand = FALSE) +
+  theme_void()
+```
+
+```{r}
+max_x <- max(c(walls$x1, walls$x2), na.rm = TRUE)
+max_y <- max(c(walls$y1, walls$y2), na.rm = TRUE)
+
+walls_df_flipped <- walls %>%
+  mutate(
+    x1 = max_x - x1,
+    x2 = max_x - x2,
+    y1 = max_y - y1,
+    y2 = max_y - y2
+  )
+
+walls_sf_flipped <- walls_df_flipped %>%
+  rowwise() %>%
+  mutate(
+    geometry = st_sfc(
+      st_linestring(matrix(c(x1, y1, x2, y2), ncol = 2, byrow = TRUE))
+    )
+  ) %>%
+  ungroup() %>%
+  st_as_sf(crs = NA)
+
+traj_flipped <- traj %>%
+  mutate(
+    x = max_x - x,
+    y = max_y - y
+  )
+
+floor_id <- 0
+
+ggplot() +
+  geom_sf(data = walls_sf_flipped %>% filter(floor == floor_id), linewidth = 0.25) +
+  geom_point(
+    data = traj_flipped %>%
+      filter(floor == floor_id),
+    aes(x = x, y = y),
+    size = 0.4,
+    alpha = 0.5
+  ) +
+  coord_sf(expand = FALSE) +
+  theme_void()
+```
+
+```{r}
+round_linestring <- function(geom, digits = 0) {
+  coords <- st_coordinates(geom)[, c("X", "Y")]
+  coords <- round(coords, digits)
+  st_linestring(coords)
+}
+
+make_polygons <- function(floor_id, area_threshold = 5000) {
+  wall_floor <- walls %>%
+    filter(floor == floor_id) %>%
+    mutate(
+      geometry = st_sfc(map(geometry, round_linestring, digits = 0), crs = NA)
+    )
+  
+  linework <- wall_floor %>%
+    st_geometry() %>%
+    st_union() %>%
+    st_node()
+  
+  st_polygonize(linework) %>%
+    st_collection_extract("POLYGON") %>%
+    st_sf(
+      floor = floor_id,
+      poly_id = paste0("f", floor_id, "_p", seq_along(.)),
+      geometry = .
+    ) %>%
+    mutate(area_px = as.numeric(st_area(geometry))) %>%
+    filter(area_px > area_threshold)
+}
+
+polys_0 <- make_polygons(0)
+```
+
+
+
+
