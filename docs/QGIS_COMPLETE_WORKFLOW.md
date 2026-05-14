@@ -9,7 +9,7 @@ Scripts:
 
 Repository root:
 
-`/home/runner/work/SpatialAnalytics/SpatialAnalytics`
+`<repository-root>`
 
 ## 1) Export full multi-object GeoJSON per floor
 

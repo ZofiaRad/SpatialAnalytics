@@ -10,6 +10,27 @@ INPUT_JSON = REPO_ROOT / "data" / "NMFA_3floors_plan.json"
 
 
 class FullGeojsonConversionTests(unittest.TestCase):
+    def _expected_spatial_counts_by_floor(self) -> dict[int, int]:
+        plan = json.loads(INPUT_JSON.read_text())
+        expected: dict[int, int] = {}
+        for floor in plan["floors"]:
+            count = 0
+            for collection in floor.values():
+                if not isinstance(collection, list):
+                    continue
+                for obj in collection:
+                    if not isinstance(obj, dict):
+                        continue
+                    points = obj.get("position") or obj.get("formToDraw")
+                    if (
+                        isinstance(points, list)
+                        and points
+                        and all(isinstance(p, dict) and "x" in p and "y" in p for p in points)
+                    ):
+                        count += 1
+            expected[int(floor["number"])] = count
+        return expected
+
     def test_json_to_geojson_full_exports_all_floor_objects(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
@@ -30,9 +51,10 @@ class FullGeojsonConversionTests(unittest.TestCase):
             floor1 = json.loads((output_dir / "floor_1_all_objects.geojson").read_text())
             floor2 = json.loads((output_dir / "floor_2_all_objects.geojson").read_text())
 
-            self.assertEqual(len(floor0["features"]), 300)
-            self.assertEqual(len(floor1["features"]), 239)
-            self.assertEqual(len(floor2["features"]), 97)
+            expected_counts = self._expected_spatial_counts_by_floor()
+            self.assertEqual(len(floor0["features"]), expected_counts[0])
+            self.assertEqual(len(floor1["features"]), expected_counts[1])
+            self.assertEqual(len(floor2["features"]), expected_counts[2])
 
             wall_feature = next(
                 f

@@ -83,7 +83,7 @@ def build_feature(
         paintings = []
 
     wall_id_reference = None
-    if paintings or object_type == "wall":
+    if object_type == "wall" and paintings:
         wall_id_reference = str(object_id)
 
     feature = {
