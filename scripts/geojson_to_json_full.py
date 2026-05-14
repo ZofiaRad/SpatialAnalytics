@@ -54,7 +54,9 @@ def apply_geometry_to_object(
     if geometry_type == "Point":
         coordinates = geometry.get("coordinates", [])
         if not isinstance(coordinates, list) or len(coordinates) != 2:
-            raise ValueError("Point geometry coordinates must be [x, y].")
+            raise ValueError(
+                f"Point geometry coordinates must be [x, y] (got {coordinates!r})."
+            )
         xy = [{"x": float(coordinates[0]), "y": float(coordinates[1])}]
     elif geometry_type == "LineString":
         coordinates = geometry.get("coordinates", [])
@@ -102,8 +104,7 @@ def build_room_from_feature(feature: Dict[str, Any], properties: Dict[str, Any])
     original_data = properties.get("original_data")
     if isinstance(original_data, dict):
         room.update(copy.deepcopy(original_data))
-        # Keep any extra room metadata from original_data, but always trust
-        # geometry/properties edited in GeoJSON for ID, name and polygon.
+        # Keep extra room metadata from original_data, but use edited GeoJSON ID/name/polygon.
         room["id"] = room_id
         room["name"] = room_name
         room["polygon"] = extract_polygon_points(geometry)
