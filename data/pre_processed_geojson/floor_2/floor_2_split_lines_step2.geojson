@@ -1,0 +1,12 @@
+{
+"type": "FeatureCollection",
+"name": "floor_2_split_lines_step2",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "fid": 108, "id": null, "object_type": null, "room_id": "rw_1", "floor": 2, "source_collection": null, "source_index": null, "spatial_field": null, "original_data": null, "paintings": null, "wall_id_reference": null }, "geometry": { "type": "MultiLineString", "coordinates": [ [ [ 787.013841074944025, 5674.675199999999677 ], [ 787.013841074944025, 5529.675199999999677 ] ] ] } },
+{ "type": "Feature", "properties": { "fid": 109, "id": null, "object_type": null, "room_id": "rw_2", "floor": 2, "source_collection": null, "source_index": null, "spatial_field": null, "original_data": null, "paintings": null, "wall_id_reference": null }, "geometry": { "type": "MultiLineString", "coordinates": [ [ [ 2037.0, 5671.675199999999677 ], [ 2037.0, 5526.675199999999677 ] ] ] } },
+{ "type": "Feature", "properties": { "fid": 110, "id": null, "object_type": null, "room_id": "rw_3", "floor": 2, "source_collection": null, "source_index": null, "spatial_field": null, "original_data": null, "paintings": null, "wall_id_reference": null }, "geometry": { "type": "MultiLineString", "coordinates": [ [ [ 2500.5, 5087.13104529508928 ], [ 2759.487047844959761, 5010.640905441603536 ] ] ] } },
+{ "type": "Feature", "properties": { "fid": 111, "id": null, "object_type": null, "room_id": "rw_4", "floor": 2, "source_collection": null, "source_index": null, "spatial_field": null, "original_data": null, "paintings": null, "wall_id_reference": null }, "geometry": { "type": "MultiLineString", "coordinates": [ [ [ 740.0, 5017.675199999999677 ], [ 742.5, 4890.167199999999866 ] ] ] } },
+{ "type": "Feature", "properties": { "fid": 112, "id": null, "object_type": null, "room_id": "rw_5", "floor": 2, "source_collection": null, "source_index": null, "spatial_field": null, "original_data": null, "paintings": null, "wall_id_reference": null }, "geometry": { "type": "MultiLineString", "coordinates": [ [ [ 574.0, 5049.667199999999866 ], [ 703.5, 5047.175199999999677 ] ] ] } }
+]
+}
