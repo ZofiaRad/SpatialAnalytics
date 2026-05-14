@@ -190,6 +190,13 @@ make_polygons <- function(floor_id, area_threshold = 5000) {
 polys_0 <- make_polygons(0)
 ```
 
+```{r}
+library(sf)
+library(rgdal)
+plan <- fromJSON("data/NMFA_3floors_plan.json", simplifyVector = FALSE)
+st_write(meuse_sf, "meuse.geojson")
+```
+
 
 
 

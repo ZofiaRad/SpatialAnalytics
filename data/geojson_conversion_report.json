@@ -1,0 +1,61 @@
+{
+  "input_json": "/Users/alex/Documents/GitHub/SpatialAnalytics/data/NMFA_3floors_plan.json",
+  "floors": {
+    "0": {
+      "geojson_file": "/Users/alex/Documents/GitHub/SpatialAnalytics/data/floor_0_all_objects.geojson",
+      "feature_count": 300,
+      "object_type_counts": {
+        "wall": 235,
+        "stair": 17,
+        "nextfloor": 5,
+        "window": 17,
+        "circle": 16,
+        "door": 10
+      },
+      "source_collection_counts": {
+        "walls": 235,
+        "background": 65
+      }
+    },
+    "1": {
+      "geojson_file": "/Users/alex/Documents/GitHub/SpatialAnalytics/data/floor_1_all_objects.geojson",
+      "feature_count": 239,
+      "object_type_counts": {
+        "wall": 185,
+        "door": 4,
+        "stair": 18,
+        "nextfloor": 6,
+        "window": 18,
+        "circle": 8
+      },
+      "source_collection_counts": {
+        "walls": 185,
+        "background": 54
+      }
+    },
+    "2": {
+      "geojson_file": "/Users/alex/Documents/GitHub/SpatialAnalytics/data/floor_2_all_objects.geojson",
+      "feature_count": 97,
+      "object_type_counts": {
+        "wall": 75,
+        "door": 1,
+        "stair": 7,
+        "nextfloor": 1,
+        "window": 13
+      },
+      "source_collection_counts": {
+        "walls": 75,
+        "background": 22
+      }
+    }
+  },
+  "total_features": 636,
+  "aggregate_object_type_counts": {
+    "wall": 495,
+    "stair": 42,
+    "nextfloor": 12,
+    "window": 48,
+    "circle": 24,
+    "door": 15
+  }
+}

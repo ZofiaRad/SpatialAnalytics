@@ -18,7 +18,6 @@ ID_PREFIX_TO_TYPE = {
     "R": "room",
 }
 
-
 def extract_coords_from_points(points: Any) -> Optional[List[List[float]]]:
     if not isinstance(points, list) or not points:
         return None
@@ -140,13 +139,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--input-json",
-        default="data/NMFA_3floors_plan.json",
+        default="/Users/alex/Documents/GitHub/SpatialAnalytics/data/NMFA_3floors_plan.json",
         help="Path to input floor-plan JSON.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="data",
-        help="Directory where floor_*_all_objects.geojson files are written.",
     )
     parser.add_argument(
         "--report-file",
@@ -156,7 +150,7 @@ def main() -> None:
     args = parser.parse_args()
 
     input_path = Path(args.input_json)
-    output_dir = Path(args.output_dir)
+    output_dir = Path(__file__).resolve().parent.parent / "data"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     with input_path.open("r", encoding="utf-8") as f:
