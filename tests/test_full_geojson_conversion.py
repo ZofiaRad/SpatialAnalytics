@@ -7,6 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INPUT_JSON = REPO_ROOT / "data" / "NMFA_3floors_plan.json"
+TEST_ROOM_POLYGON = [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]]
 
 
 class FullGeojsonConversionTests(unittest.TestCase):
@@ -96,9 +97,7 @@ class FullGeojsonConversionTests(unittest.TestCase):
                     "type": "Feature",
                     "geometry": {
                         "type": "Polygon",
-                        "coordinates": [
-                            [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]]
-                        ],
+                        "coordinates": [TEST_ROOM_POLYGON],
                     },
                     "properties": {
                         "id": "F0_R_TEST",

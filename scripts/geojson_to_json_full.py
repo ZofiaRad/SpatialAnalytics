@@ -100,14 +100,17 @@ def build_room_from_feature(feature: Dict[str, Any], properties: Dict[str, Any])
 
     room_id = str(properties.get("id") or properties.get("room_id") or "room")
     room_name = str(properties.get("name") or properties.get("room_name") or room_id)
-    room = {"id": room_id, "name": room_name, "polygon": extract_polygon_points(geometry)}
+    polygon = extract_polygon_points(geometry)
     original_data = properties.get("original_data")
     if isinstance(original_data, dict):
-        room.update(copy.deepcopy(original_data))
-        # Keep extra room metadata from original_data, but use edited GeoJSON ID/name/polygon.
-        room["id"] = room_id
-        room["name"] = room_name
-        room["polygon"] = extract_polygon_points(geometry)
+        room = copy.deepcopy(original_data)
+    else:
+        room = {}
+
+    # Keep extra room metadata from original_data, but use edited GeoJSON ID/name/polygon.
+    room["id"] = room_id
+    room["name"] = room_name
+    room["polygon"] = polygon
     return room
 
 
