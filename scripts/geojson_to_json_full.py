@@ -55,14 +55,16 @@ def apply_geometry_to_object(
         coordinates = geometry.get("coordinates", [])
         if not isinstance(coordinates, list) or len(coordinates) != 2:
             raise ValueError(
-                f"Point geometry coordinates must be [x, y] (got {coordinates!r})."
+                "Point geometry coordinates must be [x, y] "
+                f"(got {type(coordinates).__name__}: {coordinates!r})."
             )
         xy = [{"x": float(coordinates[0]), "y": float(coordinates[1])}]
     elif geometry_type == "LineString":
         coordinates = geometry.get("coordinates", [])
         if not isinstance(coordinates, list) or len(coordinates) < 2:
             raise ValueError(
-                f"LineString geometry must have at least 2 coordinate points (got {len(coordinates)})."
+                "LineString geometry must have at least 2 coordinate points "
+                f"(got {type(coordinates).__name__}: {coordinates!r})."
             )
         xy = coords_to_xy_dicts(coordinates)
     elif geometry_type == "Polygon":

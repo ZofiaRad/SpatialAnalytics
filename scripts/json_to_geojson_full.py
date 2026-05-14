@@ -23,12 +23,9 @@ def extract_coords_from_points(points: Any) -> Optional[List[List[float]]]:
     if not isinstance(points, list) or not points:
         return None
 
-    coords: List[List[float]] = []
-    for point in points:
-        if not isinstance(point, dict) or "x" not in point or "y" not in point:
-            return None
-        coords.append([float(point["x"]), float(point["y"])])
-    return coords
+    if not all(isinstance(point, dict) and "x" in point and "y" in point for point in points):
+        return None
+    return [[float(point["x"]), float(point["y"])] for point in points]
 
 
 def infer_object_type(

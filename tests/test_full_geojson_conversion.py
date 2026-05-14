@@ -11,7 +11,7 @@ TEST_ROOM_POLYGON = [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]]
 
 
 class FullGeojsonConversionTests(unittest.TestCase):
-    def _count_spatial_objects_per_floor(self) -> dict[int, int]:
+    def _get_expected_object_counts(self) -> dict[int, int]:
         plan = json.loads(INPUT_JSON.read_text())
         expected: dict[int, int] = {}
         for floor in plan["floors"]:
@@ -52,7 +52,7 @@ class FullGeojsonConversionTests(unittest.TestCase):
             floor1 = json.loads((output_dir / "floor_1_all_objects.geojson").read_text())
             floor2 = json.loads((output_dir / "floor_2_all_objects.geojson").read_text())
 
-            expected_counts = self._count_spatial_objects_per_floor()
+            expected_counts = self._get_expected_object_counts()
             self.assertEqual(len(floor0["features"]), expected_counts[0])
             self.assertEqual(len(floor1["features"]), expected_counts[1])
             self.assertEqual(len(floor2["features"]), expected_counts[2])
