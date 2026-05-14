@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 
-REPO_ROOT = Path("/home/runner/work/SpatialAnalytics/SpatialAnalytics")
+REPO_ROOT = Path(__file__).resolve().parents[1]
 INPUT_JSON = REPO_ROOT / "data" / "NMFA_3floors_plan.json"
 
 

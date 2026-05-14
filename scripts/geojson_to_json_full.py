@@ -26,7 +26,8 @@ def parse_floor_number(
 
     if fallback_floor is None:
         raise ValueError(
-            f"Feature missing floor/floor_number property in {path_hint} and no --floor-number was provided."
+            f"Feature missing floor/floor_number property in {path_hint}. "
+            "Provide --floor-number N when running the script."
         )
     return fallback_floor
 
@@ -58,7 +59,9 @@ def apply_geometry_to_object(
     elif geometry_type == "LineString":
         coordinates = geometry.get("coordinates", [])
         if not isinstance(coordinates, list) or len(coordinates) < 2:
-            raise ValueError("LineString geometry must have at least 2 coordinate points.")
+            raise ValueError(
+                f"LineString geometry must have at least 2 coordinate points (got {len(coordinates)})."
+            )
         xy = coords_to_xy_dicts(coordinates)
     elif geometry_type == "Polygon":
         obj["polygon"] = extract_polygon_points(geometry)
@@ -176,7 +179,10 @@ def merge_objects(
                 existing_rooms = floor.get("rooms", [])
                 if not isinstance(existing_rooms, list):
                     existing_rooms = []
-                floor["rooms"] = items if replace_existing_rooms else existing_rooms + items
+                if replace_existing_rooms:
+                    floor["rooms"] = items
+                else:
+                    floor["rooms"] = existing_rooms + items
             else:
                 floor[collection_name] = items
 

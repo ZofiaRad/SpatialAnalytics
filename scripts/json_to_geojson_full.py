@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
+# Fallback mapping for IDs such as "W0_10", where the leading letter encodes object type.
+# This is used when an object does not provide an explicit "type" field.
 ID_PREFIX_TO_TYPE = {
     "W": "wall",
     "D": "door",
@@ -44,6 +46,8 @@ def infer_object_type(
             if prefix in ID_PREFIX_TO_TYPE:
                 return ID_PREFIX_TO_TYPE[prefix]
 
+    # Collection names in this project are mostly regular plurals (e.g. "walls").
+    # When no explicit type or ID prefix is available, singularize this simple case.
     if source_collection.endswith("s") and len(source_collection) > 1:
         return source_collection[:-1].lower()
     if source_collection:
