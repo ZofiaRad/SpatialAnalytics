@@ -3,6 +3,7 @@ title: "Room_analysis"
 output: html_document
 ---
 
+# Libraries
 ```{r}
 # loading libraries
 install.packages("rjson")
@@ -21,6 +22,7 @@ library(grid)
 library(tibble)
 ```
 
+# Reading data
 ```{r}
 # not using CRS
 sf::sf_use_s2(FALSE)
@@ -65,8 +67,17 @@ trajectory_f01 <- geo_trajectories %>%
 trajectory_f02 <- geo_trajectories %>% 
   dplyr::filter(.data$floorNumber == 2)
 ```
+```{r}
+# plot polygons from floor 2 with names
+ggplot() +
+  geom_sf(data = floor_2_rooms, fill = NA, color = "blue") +
+  geom_sf_text(data = floor_2_rooms, aes(label = room_id), size = 3) +
+  theme_void() +
+  labs(title = "Floor 2 Rooms with IDs")
+```
 
 
+# Room and trajectories combine
 ```{r}
 #combine trajectories with rooms for each floor
 trajectory_f00_rooms <- st_join(
@@ -98,6 +109,8 @@ trajectories_with_rooms <- bind_rows(
 )
 ```
 
+
+# Safety check of rooms
 ```{r}
 # check how many points did not get assigned a room - it is around 1.3 percent
 trajectories_with_rooms %>%
@@ -108,22 +121,9 @@ trajectories_with_rooms %>%
     missing_room_pct = mean(is.na(room_id)) * 100
   )
 ```
-```{r}
-# making room sequences
-room_sequences <- trajectories_with_rooms %>%
-  st_drop_geometry() %>%
-  arrange(id, timestamp) %>%
-  group_by(id) %>%
-  mutate(
-    previous_room = lag(room_id),
-    room_change = room_id != previous_room | is.na(previous_room)
-  ) %>%
-  filter(room_change) %>%
-  summarise(
-    room_sequence = paste(room_id, collapse = " -> "),
-    .groups = "drop"
-  )
 
+# Room sequencing
+```{r}
 trajectories_with_rooms <- trajectories_with_rooms %>%
   mutate(timestamp = as.numeric(timestamp))
 

@@ -10,6 +10,25 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+# making room sequences
+room_sequences <- trajectories_with_rooms %>%
+  st_drop_geometry() %>%
+  arrange(id, timestamp) %>%
+  group_by(id) %>%
+  mutate(
+    previous_room = lag(room_id),
+    room_change = room_id != previous_room | is.na(previous_room)
+  ) %>%
+  filter(room_change) %>%
+  summarise(
+    room_sequence = paste(room_id, collapse = " -> "),
+    .groups = "drop"
+  )
+
+```
+
+
+```{r}
 # combine all rooms into one dataframe
 rooms_all <- bind_rows(
   floor_0_rooms %>% mutate(floorNumber = 0),
