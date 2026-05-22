@@ -67,15 +67,6 @@ trajectory_f01 <- geo_trajectories %>%
 trajectory_f02 <- geo_trajectories %>% 
   dplyr::filter(.data$floorNumber == 2)
 ```
-```{r}
-# plot polygons from floor 2 with names
-ggplot() +
-  geom_sf(data = floor_2_rooms, fill = NA, color = "blue") +
-  geom_sf_text(data = floor_2_rooms, aes(label = room_id), size = 3) +
-  theme_void() +
-  labs(title = "Floor 2 Rooms with IDs")
-```
-
 
 # Room and trajectories combine
 ```{r}
@@ -298,7 +289,7 @@ sum(!edges_directed_checked$is_physically_possible)
 sum(edges_directed_checked$is_physically_possible)
 
 dropped_edges <- edges_directed_checked %>%
-  filter(!is_physically_possible) %>%
+  filter(!is_physically_possible)
   
 dropped_edges
 sum(edges_directed_checked$transition_count[!edges_directed_checked$is_physically_possible], na.rm = TRUE)
