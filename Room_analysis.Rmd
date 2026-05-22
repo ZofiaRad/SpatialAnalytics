@@ -13,9 +13,12 @@ library(jsonlite)
 library(dplyr)
 library(jsonlite)
 library(sf)
-library(dplyr)
 library(purrr)
 library(ggplot2)
+library(tidyr)
+library(scales)
+library(grid)
+library(tibble)
 ```
 
 ```{r}
@@ -96,7 +99,7 @@ trajectories_with_rooms <- bind_rows(
 ```
 
 ```{r}
-# check how many points did not get assigned a room
+# check how many points did not get assigned a room - it is around 1.3 percent
 trajectories_with_rooms %>%
   st_drop_geometry() %>%
   summarise(
@@ -105,174 +108,652 @@ trajectories_with_rooms %>%
     missing_room_pct = mean(is.na(room_id)) * 100
   )
 ```
-
-
-
-
-### OLD
 ```{r}
-# combine coordinates of walls
-walls <- map_dfr(plan$floors, function(floors) {
-  map_dfr(floors$walls, function(wall) {
-    p1 <- wall$position[[1]]
-    p2 <- wall$position[[2]]
+# making room sequences
+room_sequences <- trajectories_with_rooms %>%
+  st_drop_geometry() %>%
+  arrange(id, timestamp) %>%
+  group_by(id) %>%
+  mutate(
+    previous_room = lag(room_id),
+    room_change = room_id != previous_room | is.na(previous_room)
+  ) %>%
+  filter(room_change) %>%
+  summarise(
+    room_sequence = paste(room_id, collapse = " -> "),
+    .groups = "drop"
+  )
+
+trajectories_with_rooms <- trajectories_with_rooms %>%
+  mutate(timestamp = as.numeric(timestamp))
+
+# making room episodes
+room_episodes <- trajectories_with_rooms %>%
+  st_drop_geometry() %>%
+  arrange(id, timestamp) %>%
+  group_by(id) %>%
+  mutate(
+    room_change = room_id != lag(room_id, default = first(room_id)),
+    episode_id = cumsum(room_change)
+  ) %>%
+  group_by(id, episode_id, floorNumber, room_id) %>%
+  summarise(
+    entry_time = min(timestamp),
+    exit_time = max(timestamp),
+    duration_sec = as.numeric(difftime(max(timestamp), min(timestamp), units = "secs")) + 2,
+    n_points = n(),
+    .groups = "drop"
+  )
+
+# making room transitions
+room_transitions <- room_episodes %>%
+  arrange(id, episode_id) %>%
+  group_by(id) %>%
+  mutate(
+    from_room = room_id,
+    to_room = lead(room_id),
+    from_floor = floorNumber,
+    to_floor = lead(floorNumber),
+    transition_order = row_number()
+  ) %>%
+  filter(!is.na(to_room)) %>%
+  ungroup()
+
+transition_counts <- room_transitions %>%
+  count(from_floor, from_room, to_floor, to_room, sort = TRUE)
+
+transition_counts
+```
+
+```{r}
+rooms_all <- bind_rows(
+  floor_0_rooms %>% mutate(floorNumber = 0),
+  floor_1_rooms %>% mutate(floorNumber = 1),
+  floor_2_rooms %>% mutate(floorNumber = 2)
+) %>%
+  mutate(
+    floorNumber = as.integer(floorNumber),
+    room_id = as.character(room_id)
+  ) %>%
+  st_make_valid()
+
+room_nodes_sf <- rooms_all %>%
+  mutate(geometry = st_point_on_surface(geometry))
+
+coords <- st_coordinates(room_nodes_sf)
+
+room_nodes <- room_nodes_sf %>%
+  mutate(
+    x = coords[, 1],
+    y = coords[, 2]
+  ) %>%
+  st_drop_geometry() %>%
+  select(floorNumber, room_id, x, y)
+```
+
+```{r}
+# ---------- observed directed transitions ----------
+
+edges_directed <- transition_counts %>%
+  filter(from_floor == to_floor) %>%
+  transmute(
+    floorNumber = as.integer(from_floor),
+    from_room = as.character(from_room),
+    to_room = as.character(to_room),
+    transition_count = n
+  )
+```
+
+```{r}
+# ---------- physical adjacency constraints ----------
+
+make_floor_adjacency <- function(rooms_all, floor_no, min_shared_length = 0.01) {
+  
+  rooms_floor <- rooms_all %>%
+    filter(floorNumber == floor_no) %>%
+    st_make_valid()
+  
+  room_ids <- rooms_floor$room_id
+  geoms <- st_geometry(rooms_floor)
+  
+  pairs <- combn(seq_along(room_ids), 2, simplify = FALSE)
+  
+  map_dfr(pairs, function(pair) {
+    i <- pair[1]
+    j <- pair[2]
     
-    painting_ids <- if (length(wall$paintings) == 0) {
-      character(0)
-    } else {
-      map_chr(wall$paintings, "id")
+    shared_boundary <- suppressWarnings(
+      st_intersection(st_boundary(geoms[i]), st_boundary(geoms[j]))
+    )
+    
+    shared_length <- suppressWarnings(as.numeric(st_length(shared_boundary)))
+    
+    if (
+      length(shared_length) == 0 ||
+      is.na(shared_length) ||
+      shared_length <= min_shared_length
+    ) {
+      return(NULL)
     }
     
     tibble(
-      floor = floors$number,
-      wall_id = wall$id,
-      x1 = p1$x,
-      y1 = p1$y,
-      x2 = p2$x,
-      y2 = p2$y,
-      painting_ids = list(painting_ids),
-      type = "wall"
+      floorNumber = floor_no,
+      room_a = pmin(room_ids[i], room_ids[j]),
+      room_b = pmax(room_ids[i], room_ids[j]),
+      shared_length = shared_length
     )
   })
-}) %>%
-  rowwise() %>%
-  mutate(
-    geometry = st_sfc(
-      st_linestring(matrix(c(x1, y1, x2, y2), ncol = 2, byrow = TRUE))
-    )
-  ) %>%
-  ungroup() %>%
-  st_as_sf(crs = NA)
+}
 
-# combine coordinates of background objects
-background <- map_dfr(plan$floors, function(floors) {
-  map_dfr(floors$background, function(background) {
-    p1 <- background$formToDraw[[1]]
-    p2 <- background$formToDraw[[2]]
-    
-    tibble(
-      floor = floors$number,
-      background_id = background$id,
-      type = background$type,
-      x1 = p1$x,
-      y1 = p1$y,
-      x2 = p2$x,
-      y2 = p2$y
-    )
-  })
-}) %>%
-  rowwise() %>%
-  mutate(
-    geometry = st_sfc(
-      st_linestring(matrix(c(x1, y1, x2, y2), ncol = 2, byrow = TRUE))
-    )
-  ) %>%
-  ungroup() %>%
-  st_as_sf(crs = NA)
+blocked_pairs <- tibble::tribble(
+  ~floorNumber, ~room_a, ~room_b,
+  0, "13", "16",
+  0, "11", "15"
+)
 
-# combine coordinates of walls and background into one dataframe adding background objects as new rows
-combined_df <- bind_rows(
-  list(walls, background)
+allowed_pairs <- map_dfr(
+  sort(unique(rooms_all$floorNumber)),
+  ~ make_floor_adjacency(rooms_all, .x)
+) %>%
+  anti_join(blocked_pairs, by = c("floorNumber", "room_a", "room_b")) %>%
+  distinct(floorNumber, room_a, room_b, shared_length)
+```
+
+```{r}
+# ---------- check and filter observed edges ----------
+
+edges_directed_checked <- edges_directed %>%
+  mutate(
+    room_a = pmin(from_room, to_room),
+    room_b = pmax(from_room, to_room)
+  ) %>%
+  left_join(
+    allowed_pairs %>%
+      mutate(is_physically_possible = TRUE),
+    by = c("floorNumber", "room_a", "room_b")
+  ) %>%
+  mutate(
+    is_physically_possible = replace_na(is_physically_possible, FALSE)
+  )
+
+edges_directed_valid <- edges_directed_checked %>%
+  filter(is_physically_possible) %>%
+  select(floorNumber, from_room, to_room, transition_count)
+```
+
+```{r}
+# ---------- check how many were dropped ----------
+dropped_by_floor <- edges_directed_checked %>%
+  group_by(floorNumber) %>%
+  summarise(
+    total_transitions = sum(transition_count, na.rm = TRUE),
+    dropped_transitions = sum(transition_count[!is_physically_possible], na.rm = TRUE),
+    pct_dropped = dropped_transitions / total_transitions * 100,
+    dropped_edge_rows = sum(!is_physically_possible),
+    .groups = "drop"
+  )
+
+dropped_by_floor
+sum(!edges_directed_checked$is_physically_possible)
+sum(edges_directed_checked$is_physically_possible)
+
+dropped_edges <- edges_directed_checked %>%
+  filter(!is_physically_possible) %>%
+  
+dropped_edges
+sum(edges_directed_checked$transition_count[!edges_directed_checked$is_physically_possible], na.rm = TRUE)
+
+sum(edges_directed_checked$transition_count[edges_directed_checked$is_physically_possible], na.rm = TRUE)
+
+# removed 305 observation transitions (2096 remain)
+# removed 39 edges (104 remain), so 39 impossible types of transitions - these were present 305 times
+```
+
+
+```{r}
+# ---------- node metrics ----------
+
+node_time <- room_episodes %>%
+  mutate(
+    floorNumber = as.integer(floorNumber),
+    room_id = as.character(room_id)
+  ) %>%
+  group_by(floorNumber, room_id) %>%
+  summarise(
+    total_time_sec = sum(duration_sec, na.rm = TRUE),
+    unique_visitors = n_distinct(id),
+    n_visits = n(),
+    mean_duration_sec = mean(duration_sec, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+node_transition_importance <- bind_rows(
+  edges_directed_valid %>%
+    transmute(
+      floorNumber,
+      room_id = from_room,
+      out_transitions = transition_count,
+      in_transitions = 0
+    ),
+  edges_directed_valid %>%
+    transmute(
+      floorNumber,
+      room_id = to_room,
+      out_transitions = 0,
+      in_transitions = transition_count
+    )
+) %>%
+  group_by(floorNumber, room_id) %>%
+  summarise(
+    in_transitions = sum(in_transitions),
+    out_transitions = sum(out_transitions),
+    total_transitions = in_transitions + out_transitions,
+    .groups = "drop"
+  )
+```
+
+```{r}
+minmax <- function(x) {
+  if (all(is.na(x)) || length(unique(na.omit(x))) <= 1) {
+    return(rep(0.5, length(x)))
+  }
+  scales::rescale(x, to = c(0, 1), na.rm = TRUE)
+}
+
+nodes <- room_nodes %>%
+  left_join(node_time, by = c("floorNumber", "room_id")) %>%
+  left_join(node_transition_importance, by = c("floorNumber", "room_id")) %>%
+  replace_na(list(
+    total_time_sec = 0,
+    unique_visitors = 0,
+    n_visits = 0,
+    mean_duration_sec = 0,
+    in_transitions = 0,
+    out_transitions = 0,
+    total_transitions = 0
+  )) %>%
+  group_by(floorNumber) %>%
+  mutate(
+    dwell_norm = minmax(total_time_sec),
+    visitor_norm = minmax(unique_visitors),
+    transition_norm = minmax(total_transitions),
+    importance_score = 0.5 * dwell_norm +
+      0.25 * visitor_norm +
+      0.25 * transition_norm
+  ) %>%
+  ungroup()
+```
+
+```{r}
+# ---------- helper for adding edge coordinates ----------
+add_edge_coords <- function(edges, from_col, to_col, nodes) {
+  edges %>%
+    left_join(
+      nodes %>% select(floorNumber, room_id, x_from = x, y_from = y),
+      by = c("floorNumber", setNames("room_id", from_col))
+    ) %>%
+    left_join(
+      nodes %>% select(floorNumber, room_id, x_to = x, y_to = y),
+      by = c("floorNumber", setNames("room_id", to_col))
+    ) %>%
+    filter(
+      !is.na(x_from),
+      !is.na(y_from),
+      !is.na(x_to),
+      !is.na(y_to)
+    )
+}
+
+edges_directed_xy_valid <- edges_directed_valid %>%
+  add_edge_coords(
+    from_col = "from_room",
+    to_col = "to_room",
+    nodes = room_nodes
+  )
+
+edges_undirected_valid <- edges_directed_valid %>%
+  mutate(
+    room_a = pmin(from_room, to_room),
+    room_b = pmax(from_room, to_room)
+  ) %>%
+  group_by(floorNumber, room_a, room_b) %>%
+  summarise(
+    transition_count = sum(transition_count, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(room_a != room_b)
+
+edges_undirected_xy_valid <- edges_undirected_valid %>%
+  add_edge_coords(
+    from_col = "room_a",
+    to_col = "room_b",
+    nodes = room_nodes
+  )
+```
+
+
+```{r}
+# overview of floor plans for visualization, we create a list of the floor plan spatial data frames for each floor, which allows us to easily access and plot the floor plans in our network visualizations. This is important for providing context to the room transition networks and understanding how the rooms are arranged within the building.
+floor_plans <- list(
+  `0` = floor_0_plan_sf,
+  `1` = floor_1_plan_sf,
+  `2` = floor_2_plan_sf
 )
 ```
 
 ```{r}
-# plot
-floor_id <- 0
-
-ggplot() +
-  geom_sf(data = combined_df %>% filter(floor == floor_id),
-          linewidth = 0.25) +
-  geom_text(
-    data = combined_df %>%
-      filter(floor == floor_id) %>%
-      mutate(
-        mx = (x1 + x2) / 2,
-        my = (y1 + y2) / 2
+# plotting function
+plot_room_network <- function(
+    floor_no,
+    directed = FALSE,
+    node_metric = "importance_score",
+    top_edges = 15,
+    label_top_n = 8
+) {
+  
+  floor_no <- as.integer(floor_no)
+  
+  plan_floor <- floor_plans[[as.character(floor_no)]]
+  
+  rooms_floor <- rooms_all %>%
+    filter(floorNumber == floor_no)
+  
+  nodes_floor <- nodes %>%
+    filter(floorNumber == floor_no)
+  
+  label_nodes <- nodes_floor %>%
+    arrange(desc(.data[[node_metric]])) %>%
+    slice_head(n = label_top_n)
+  
+  p <- ggplot() +
+    geom_sf(
+      data = plan_floor,
+      fill = NA,
+      colour = "grey80",
+      linewidth = 0.3
+    ) +
+    geom_sf(
+      data = rooms_floor,
+      fill = NA,
+      colour = "grey55",
+      linewidth = 0.4
+    )
+  
+  if (directed) {
+  
+  node_buffer <- 0.1  # increase if arrows still enter nodes, decrease if too far away
+  
+  edges_floor <- edges_directed_xy_valid %>%
+    filter(floorNumber == floor_no) %>%
+    arrange(desc(transition_count)) %>%
+    slice_head(n = top_edges) %>%
+    mutate(
+      dx = x_to - x_from,
+      dy = y_to - y_from,
+      edge_len = sqrt(dx^2 + dy^2)
+    ) %>%
+    filter(edge_len > 0) %>%
+    mutate(
+      # start slightly after source node
+      x_from_plot = x_from + node_buffer * dx / edge_len,
+      y_from_plot = y_from + node_buffer * dy / edge_len,
+      
+      # end slightly before target node
+      x_to_plot = x_to - node_buffer * dx / edge_len,
+      y_to_plot = y_to - node_buffer * dy / edge_len
+    )
+  
+  p <- p +
+    geom_curve(
+      data = edges_floor,
+      aes(
+        x = x_from_plot,
+        y = y_from_plot,
+        xend = x_to_plot,
+        yend = y_to_plot,
+        colour = transition_count
       ),
-    aes(x = mx, y = my, label = wall_id),
-    size = 1.8
-  ) +
-  scale_x_reverse() +
-  scale_y_reverse() +
-  coord_sf(expand = FALSE) +
-  theme_void()
+      linewidth = 0.6,
+      curvature = 0.15,
+      alpha = 0.85,
+      lineend = "round",
+      arrow = arrow(
+        length = unit(0.16, "inches"),
+        type = "closed"
+      )
+    ) +
+    scale_colour_gradient(
+      low = "lightblue",
+      high = "darkblue",
+      name = "Transitions"
+      )
+}
+   else {
+    
+    edges_floor <- edges_undirected_xy_valid %>%
+      filter(floorNumber == floor_no)
+    
+    p <- p +
+      geom_segment(
+        data = edges_floor,
+        aes(
+          x = x_from,
+          y = y_from,
+          xend = x_to,
+          yend = y_to,
+          linewidth = transition_count
+        ),
+        alpha = 0.55
+      )
+  }
+  
+  p +
+    geom_point(
+      data = nodes_floor,
+      aes(
+        x = x,
+        y = y,
+        size = .data[[node_metric]],
+        color = .data[[node_metric]]
+      ),
+      alpha = 0.8
+    ) +
+    geom_text(
+      data = label_nodes,
+      aes(
+        x = x,
+        y = y,
+        label = room_id
+      ),
+      size = 3,
+      vjust = -1
+    ) +
+    scale_size_continuous(range = c(2, 11)) +
+    scale_linewidth_continuous(range = c(0.2, 2.5)) +
+    coord_sf() +
+    theme_void() +
+    labs(
+      title = paste0(
+        "Room transition network, floor ",
+        floor_no,
+        ifelse(directed, " directed", " undirected")
+      ),
+      size = node_metric,
+      linewidth = "Transition count"
+    )
+}
 ```
 
 ```{r}
-max_x <- max(c(walls$x1, walls$x2), na.rm = TRUE)
-max_y <- max(c(walls$y1, walls$y2), na.rm = TRUE)
+plot_room_network(
+  floor_no = 0,
+  directed = FALSE,
+  node_metric = "importance_score"
+)
 
-walls_df_flipped <- walls %>%
+plot_room_network(
+  floor_no = 1,
+  directed = FALSE,
+  node_metric = "importance_score"
+)
+
+plot_room_network(
+  floor_no = 2,
+  directed = FALSE,
+  node_metric = "importance_score"
+)
+```
+
+```{r}
+plot_room_network(
+  floor_no = 0,
+  directed = TRUE,
+  node_metric = "importance_score",
+  top_edges = 15
+)
+
+plot_room_network(
+  floor_no = 1,
+  directed = TRUE,
+  node_metric = "importance_score",
+  top_edges = 15
+)
+
+plot_room_network(
+  floor_no = 2,
+  directed = TRUE,
+  node_metric = "importance_score",
+  top_edges = 15
+)
+```
+
+
+# RQ: Room hubs and if more time is more spent stopping / transitioning in certain rooms
+```{r}
+# getting max number of transition nodes to find the centroids potentially
+nodes %>%
+  group_by(floorNumber) %>%
+  slice_max(total_transitions, n = 3) %>%
+  ungroup() %>%
+  select(floorNumber, room_id, total_transitions, x, y)
+
+# getting rooms with most dwell time
+nodes %>%
+  group_by(floorNumber) %>%
+  slice_max(total_time_sec, n = 3) %>%
+  ungroup() %>%
+  select(floorNumber, room_id, total_time_sec, x, y)
+
+# getting rooms with largest dwell time on average
+nodes %>%
+  group_by(floorNumber) %>%
+  slice_max(mean_duration_sec, n = 3) %>%
+  ungroup() %>%
+  select(floorNumber, room_id, mean_duration_sec, x, y)
+```
+
+
+```{r}
+branching_points <- edges_directed_valid %>%
+  group_by(floorNumber, from_room) %>%
   mutate(
-    x1 = max_x - x1,
-    x2 = max_x - x2,
-    y1 = max_y - y1,
-    y2 = max_y - y2
+    total_from_room = sum(transition_count, na.rm = TRUE),
+    p_transition = transition_count / total_from_room
+  ) %>%
+  summarise(
+    n_next_rooms = n_distinct(to_room),
+    dominant_next_room = to_room[which.max(transition_count)],
+    dominant_share = max(p_transition, na.rm = TRUE),
+    transition_entropy = -sum(p_transition * log2(p_transition), na.rm = TRUE),
+    total_transitions = sum(transition_count, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(floorNumber, desc(transition_entropy))
+
+branching_points
+
+#high dominant_share = most visitors follow same next-room route
+#high transition_entropy = visitors split into different routes
+#high n_next_rooms = room functions as a branching point
+```
+
+```{r}
+floor_route_structure <- branching_points %>%
+  group_by(floorNumber) %>%
+  summarise(
+    mean_dominant_share = mean(dominant_share, na.rm = TRUE),
+    mean_transition_entropy = mean(transition_entropy, na.rm = TRUE),
+    mean_next_rooms = mean(n_next_rooms, na.rm = TRUE),
+    n_branching_rooms = sum(n_next_rooms > 1),
+    .groups = "drop"
   )
 
-walls_sf_flipped <- walls_df_flipped %>%
-  rowwise() %>%
+floor_route_structure
+
+#high mean_dominant_share	floor produces similar routes
+#high mean_transition_entropy	floor allows diverse exploration
+#many n_branching_rooms	floor has many decision points
+```
+
+
+```{r}
+visitor_transitions <- room_episodes %>%
   mutate(
-    geometry = st_sfc(
-      st_linestring(matrix(c(x1, y1, x2, y2), ncol = 2, byrow = TRUE))
-    )
+    floorNumber = as.integer(floorNumber),
+    room_id = as.character(room_id)
+  ) %>%
+  arrange(id, episode_id) %>%
+  group_by(id) %>%
+  mutate(
+    from_room = room_id,
+    to_room = lead(room_id),
+    from_floor = floorNumber,
+    to_floor = lead(floorNumber),
+    transition_order = row_number()
+  ) %>%
+  filter(
+    !is.na(to_room),
+    from_floor == to_floor
   ) %>%
   ungroup() %>%
-  st_as_sf(crs = NA)
-
-traj_flipped <- traj %>%
-  mutate(
-    x = max_x - x,
-    y = max_y - y
+  transmute(
+    id,
+    floorNumber = from_floor,
+    transition_order,
+    from_room,
+    to_room
   )
 
-floor_id <- 0
+visitor_transitions_valid <- visitor_transitions %>%
+  mutate(
+    room_a = pmin(from_room, to_room),
+    room_b = pmax(from_room, to_room)
+  ) %>%
+  inner_join(
+    allowed_pairs %>% select(floorNumber, room_a, room_b),
+    by = c("floorNumber", "room_a", "room_b")
+  )
 
-ggplot() +
-  geom_sf(data = walls_sf_flipped %>% filter(floor == floor_id), linewidth = 0.25) +
-  geom_point(
-    data = traj_flipped %>%
-      filter(floor == floor_id),
-    aes(x = x, y = y),
-    size = 0.4,
-    alpha = 0.5
-  ) +
-  coord_sf(expand = FALSE) +
-  theme_void()
-```
+edge_popularity <- edges_directed_valid %>%
+  group_by(floorNumber) %>%
+  mutate(
+    transition_share = transition_count / sum(transition_count, na.rm = TRUE)
+  ) %>%
+  ungroup()
 
-```{r}
-round_linestring <- function(geom, digits = 0) {
-  coords <- st_coordinates(geom)[, c("X", "Y")]
-  coords <- round(coords, digits)
-  st_linestring(coords)
-}
+route_conformity <- visitor_transitions_valid %>%
+  left_join(
+    edge_popularity,
+    by = c("floorNumber", "from_room", "to_room")
+  ) %>%
+  group_by(id, floorNumber) %>%
+  summarise(
+    route_conformity = mean(transition_share, na.rm = TRUE),
+    n_valid_transitions = n(),
+    .groups = "drop"
+  )
 
-make_polygons <- function(floor_id, area_threshold = 5000) {
-  wall_floor <- walls %>%
-    filter(floor == floor_id) %>%
-    mutate(
-      geometry = st_sfc(map(geometry, round_linestring, digits = 0), crs = NA)
-    )
-  
-  linework <- wall_floor %>%
-    st_geometry() %>%
-    st_union() %>%
-    st_node()
-  
-  st_polygonize(linework) %>%
-    st_collection_extract("POLYGON") %>%
-    st_sf(
-      floor = floor_id,
-      poly_id = paste0("f", floor_id, "_p", seq_along(.)),
-      geometry = .
-    ) %>%
-    mutate(area_px = as.numeric(st_area(geometry))) %>%
-    filter(area_px > area_threshold)
-}
-
-polys_0 <- make_polygons(0)
+route_conformity 
 ```
 
 

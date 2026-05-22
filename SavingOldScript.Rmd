@@ -1,0 +1,339 @@
+---
+title: "Saving"
+author: "Alexandra"
+date: "2026-05-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# combine all rooms into one dataframe
+rooms_all <- bind_rows(
+  floor_0_rooms %>% mutate(floorNumber = 0),
+  floor_1_rooms %>% mutate(floorNumber = 1),
+  floor_2_rooms %>% mutate(floorNumber = 2)
+) %>%
+  st_make_valid()
+
+# create nodes for each room using st_point_on_surface to ensure the point is within the room polygon
+room_nodes_sf <- rooms_all %>%
+  mutate(geometry = st_point_on_surface(geometry))
+
+coords <- st_coordinates(room_nodes_sf)
+
+# use the coordinates of the points as x and y for the nodes, and keep floorNumber and room_id for joining with other data
+room_nodes <- room_nodes_sf %>%
+  mutate(
+    x = coords[, 1],
+    y = coords[, 2],
+    floorNumber = as.integer(floorNumber),
+    room_id = as.character(room_id)
+  ) %>%
+  st_drop_geometry() %>%
+  select(floorNumber, room_id, x, y)
+
+# for each room calculate total time spent, number of unique visitors, number of visits and mean duration of visits
+node_time <- room_episodes %>%
+  group_by(floorNumber, room_id) %>%
+  mutate(room_id = as.character(room_id)) %>%
+  summarise(
+    total_time_sec = sum(duration_sec, na.rm = TRUE),
+    unique_visitors = n_distinct(id),
+    n_visits = n(),
+    mean_duration_sec = mean(duration_sec, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# create edges for the directed graph based on room transitions, keeping only transitions that happen within the same floor for simplicity in visualization and analysis
+edges_directed <- transition_counts %>%
+  filter(from_floor == to_floor) %>%
+  transmute(
+    floorNumber = as.integer(from_floor),
+    from_room = as.character(from_room),
+    to_room = as.character(to_room),
+    transition_count = n
+  )
+```
+
+```{r}
+# nodes transition importance is calculated as the sum of incoming and outgoing transitions for each room, which gives an indication of how central a room is in terms of movement through the space. This can be used as one of the metrics for node importance in the network visualization.
+node_transition_importance <- bind_rows(
+  edges_directed %>%
+    transmute(
+      floorNumber,
+      room_id = as.character(from_room),
+      out_transitions = transition_count,
+      in_transitions = 0
+    ),
+  edges_directed %>%
+    transmute(
+      floorNumber,
+      room_id = as.character(to_room),
+      out_transitions = 0,
+      in_transitions = transition_count
+    )
+) %>%
+  group_by(floorNumber, room_id) %>%
+  summarise(
+    in_transitions = sum(in_transitions),
+    out_transitions = sum(out_transitions),
+    total_transitions = in_transitions + out_transitions,
+    .groups = "drop"
+  )
+```
+
+
+```{r}
+# create a custom function to normalize the metrics for node importance using min-max normalization, which scales the values to a range of 0 to 1. This is important for combining different metrics (like dwell time, unique visitors, and transition importance) into a single importance score for visualization.
+minmax <- function(x) {
+  if (all(is.na(x)) || length(unique(na.omit(x))) <= 1) {
+    return(rep(0.5, length(x)))
+  }
+  scales::rescale(x, to = c(0, 1), na.rm = TRUE)
+}
+
+# connect all previously defined metrics for nodes together and calculate an overall importance score for each room based on a weighted combination of dwell time, unique visitors, and transition importance. The weights can be adjusted based on the desired emphasis on each metric in the visualization.
+nodes <- room_nodes %>%
+  left_join(node_time, by = c("floorNumber", "room_id")) %>%
+  left_join(node_transition_importance, by = c("floorNumber", "room_id")) %>%
+  mutate(room_id = as.character(room_id)) %>%
+  replace_na(list(
+    total_time_sec = 0,
+    unique_visitors = 0,
+    n_visits = 0,
+    mean_duration_sec = 0,
+    in_transitions = 0,
+    out_transitions = 0,
+    total_transitions = 0
+  )) %>%
+  group_by(floorNumber) %>%
+  mutate(
+    dwell_norm = minmax(total_time_sec),
+    visitor_norm = minmax(unique_visitors),
+    transition_norm = minmax(total_transitions),
+    importance_score = 0.5 * dwell_norm +
+      0.25 * visitor_norm +
+      0.25 * transition_norm
+  ) %>%
+  ungroup()
+```
+
+```{r}
+# directed edges with coordinates for visualization, joining the edges with the node coordinates to get the start and end points for each edge in the network visualization. This allows us to plot the transitions between rooms as arrows on the floor plan, with the thickness of the arrows representing the transition count.
+edges_directed_xy <- edges_directed %>%
+  left_join(
+    nodes %>% select(floorNumber, room_id, x_from = x, y_from = y),
+    by = c("floorNumber", "from_room" = "room_id")
+  ) %>%
+  left_join(
+    nodes %>% select(floorNumber, room_id, x_to = x, y_to = y),
+    by = c("floorNumber", "to_room" = "room_id")
+  ) %>%
+  filter(
+    !is.na(x_from),
+    !is.na(y_from),
+    !is.na(x_to),
+    !is.na(y_to)
+  )
+
+# creating undirected edges by combining directed edges in both directions between rooms, which allows us to visualize the overall connectivity between rooms without emphasizing the direction of movement. This can be useful for understanding the general flow and relationships between spaces in the building.
+edges_undirected <- edges_directed %>%
+  mutate(
+    room_a = pmin(from_room, to_room),
+    room_b = pmax(from_room, to_room)
+  ) %>%
+  group_by(floorNumber, room_a, room_b) %>%
+  summarise(
+    transition_count = sum(transition_count, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(room_a != room_b)
+```
+
+```{r}
+# adding coordinates to undirected edges for visualization, similar to the directed edges, we join the undirected edges with the node coordinates to get the start and end points for each edge in the undirected network visualization. This allows us to plot the connections between rooms as lines on the floor plan, with the thickness of the lines representing the total transition count between those rooms.
+edges_undirected_xy <- edges_undirected %>%
+  left_join(
+    nodes %>% select(floorNumber, room_id, x_from = x, y_from = y),
+    by = c("floorNumber", "room_a" = "room_id")
+  ) %>%
+  left_join(
+    nodes %>% select(floorNumber, room_id, x_to = x, y_to = y),
+    by = c("floorNumber", "room_b" = "room_id")
+  ) %>%
+  filter(
+    !is.na(x_from),
+    !is.na(y_from),
+    !is.na(x_to),
+    !is.na(y_to)
+  )
+```
+
+```{r}
+# creating physical constraints and filtering out physically impossible transitions based on room adjacency and manual feedback
+
+make_floor_adjacency <- function(rooms_all, floor_no, min_shared_length = 0.01) {
+  
+  rooms_floor <- rooms_all %>%
+    filter(floorNumber == floor_no) %>%
+    mutate(room_id = as.character(room_id)) %>%
+    st_make_valid()
+  
+  room_ids <- rooms_floor$room_id
+  geoms <- st_geometry(rooms_floor)
+  
+  pairs <- combn(seq_along(room_ids), 2, simplify = FALSE)
+  
+  adj <- map_dfr(pairs, function(pair) {
+    i <- pair[1]
+    j <- pair[2]
+    
+    shared_boundary <- suppressWarnings(
+      st_intersection(st_boundary(geoms[i]), st_boundary(geoms[j]))
+    )
+    
+    shared_length <- suppressWarnings(as.numeric(st_length(shared_boundary)))
+    
+    if (
+      length(shared_length) == 0 ||
+      is.na(shared_length) ||
+      shared_length <= min_shared_length
+    ) {
+      return(NULL)
+    }
+    
+    tibble(
+      floorNumber = floor_no,
+      from_room = room_ids[i],
+      to_room = room_ids[j],
+      shared_length = shared_length
+    )
+  })
+  
+  adj
+}
+
+allowed_adjacencies_auto <- bind_rows(
+  make_floor_adjacency(rooms_all, 0),
+  make_floor_adjacency(rooms_all, 1),
+  make_floor_adjacency(rooms_all, 2)
+)
+
+blocked_transitions_floor0 <- tibble::tribble(
+  ~floorNumber, ~room_a, ~room_b,
+  0, "13", "16",
+  0, "11", "15"
+)
+
+allowed_adjacencies_clean <- allowed_adjacencies_auto %>%
+  mutate(
+    floorNumber = as.integer(floorNumber),
+    from_room = as.character(from_room),
+    to_room = as.character(to_room),
+    room_a = pmin(from_room, to_room),
+    room_b = pmax(from_room, to_room)
+  ) %>%
+  anti_join(
+    blocked_transitions_floor0,
+    by = c("floorNumber", "room_a", "room_b")
+  ) %>%
+  select(floorNumber, from_room, to_room, shared_length)
+
+allowed_edges_xy <- allowed_adjacencies_clean %>%
+  left_join(
+    room_nodes %>% select(floorNumber, room_id, x_from = x, y_from = y),
+    by = c("floorNumber", "from_room" = "room_id")
+  ) %>%
+  left_join(
+    room_nodes %>% select(floorNumber, room_id, x_to = x, y_to = y),
+    by = c("floorNumber", "to_room" = "room_id")
+  ) %>%
+  filter(
+    !is.na(x_from),
+    !is.na(y_from),
+    !is.na(x_to),
+    !is.na(y_to)
+  )
+```
+
+
+```{r}
+observed_edges_xy <- transition_counts %>%
+  mutate(
+    from_floor = as.integer(from_floor),
+    to_floor = as.integer(to_floor),
+    from_room = as.character(from_room),
+    to_room = as.character(to_room)
+  ) %>%
+  filter(from_floor == to_floor) %>%
+  transmute(
+    floorNumber = from_floor,
+    from_room,
+    to_room,
+    n
+  ) %>%
+  left_join(
+    room_nodes %>% select(floorNumber, room_id, x_from = x, y_from = y),
+    by = c("floorNumber", "from_room" = "room_id")
+  ) %>%
+  left_join(
+    room_nodes %>% select(floorNumber, room_id, x_to = x, y_to = y),
+    by = c("floorNumber", "to_room" = "room_id")
+  )
+
+observed_edges_checked <- observed_edges_xy %>%
+  left_join(
+    allowed_adjacencies_clean %>%
+      select(floorNumber, from_room, to_room) %>%
+      mutate(is_physically_possible = TRUE),
+    by = c("floorNumber", "from_room", "to_room")
+  ) %>%
+  mutate(
+    is_physically_possible = ifelse(is.na(is_physically_possible), FALSE, TRUE)
+  )
+
+# make sure that edges only include the checked ones in both directed and indirected
+allowed_directed <- allowed_adjacencies_clean %>%
+  mutate(
+    floorNumber = as.integer(floorNumber),
+    from_room = as.character(from_room),
+    to_room = as.character(to_room)
+  ) %>%
+  select(floorNumber, from_room, to_room)
+
+edges_directed_xy_valid <- edges_directed_xy %>%
+  mutate(
+    floorNumber = as.integer(floorNumber),
+    from_room = as.character(from_room),
+    to_room = as.character(to_room)
+  ) %>%
+  semi_join(
+    allowed_directed,
+    by = c("floorNumber", "from_room", "to_room")
+  )
+
+allowed_undirected <- allowed_adjacencies_clean %>%
+  mutate(
+    floorNumber = as.integer(floorNumber),
+    from_room = as.character(from_room),
+    to_room = as.character(to_room),
+    room_a = pmin(from_room, to_room),
+    room_b = pmax(from_room, to_room)
+  ) %>%
+  distinct(floorNumber, room_a, room_b)
+
+edges_undirected_xy_valid <- edges_undirected_xy %>%
+  mutate(
+    floorNumber = as.integer(floorNumber),
+    room_a = as.character(room_a),
+    room_b = as.character(room_b)
+  ) %>%
+  semi_join(
+    allowed_undirected,
+    by = c("floorNumber", "room_a", "room_b")
+  )
+
+```
