@@ -19,12 +19,97 @@ library(ggplot2)
 ```
 
 ```{r}
-# loading data
-# converting list to dataframe
-plan <- fromJSON("data/NMFA_3floors_plan.json", simplifyVector = FALSE)
+# not using CRS
+sf::sf_use_s2(FALSE)
+drop_crs <- function(x) {
+  st_crs(x) <- NA
+  x
+}
 
+# loading trajectory data and drop CRS
+geo_trajectories <- st_read("data/all_trajectories_with_floor.geojson")
+geo_trajectories$floorNumber <- as.integer(geo_trajectories$floorNumber)
+geo_trajectories <- drop_crs(geo_trajectories)
+
+#room plan and drop CRS
+floor_0_plan_sf <- st_read("data/geojson_converted_objects/floor_0_all_objects.geojson")
+floor_1_plan_sf <- st_read("data/geojson_converted_objects/floor_1_all_objects.geojson")
+floor_2_plan_sf <- st_read("data/geojson_converted_objects/floor_2_all_objects.geojson")
+floor_0_plan_sf <- drop_crs(floor_0_plan_sf)
+floor_1_plan_sf <- drop_crs(floor_1_plan_sf)
+floor_2_plan_sf <- drop_crs(floor_2_plan_sf)
+
+#room plan - polygons and drop CRS
+floor_0_rooms <- st_read("data/polygons/polygons_floor_0.geojson")
+floor_1_rooms <- st_read("data/polygons/polygons_floor_1.geojson")
+floor_2_rooms <- st_read("data/polygons/polygons_floor_2.geojson")
+floor_0_rooms <- drop_crs(floor_0_rooms)
+floor_1_rooms <- drop_crs(floor_1_rooms)
+floor_2_rooms <- drop_crs(floor_2_rooms)
+
+#renaming columns
+floor_0_rooms <- floor_0_rooms %>% select(room_id, geometry)
+floor_1_rooms <- floor_1_rooms %>% mutate(room_id = floor_plan)
+floor_1_rooms <- floor_1_rooms %>% select(room_id, geometry)
+floor_2_rooms <- floor_2_rooms %>% mutate(room_id = fid)
+floor_2_rooms <- floor_2_rooms %>% select(room_id, geometry)
+
+#trajectories based on floor
+trajectory_f00 <- geo_trajectories %>% 
+  dplyr::filter(.data$floorNumber == 0)
+trajectory_f01 <- geo_trajectories %>% 
+  dplyr::filter(.data$floorNumber == 1)
+trajectory_f02 <- geo_trajectories %>% 
+  dplyr::filter(.data$floorNumber == 2)
 ```
 
+
+```{r}
+#combine trajectories with rooms for each floor
+trajectory_f00_rooms <- st_join(
+  trajectory_f00,
+  floor_0_rooms %>% select(room_id),
+  join = st_covered_by,
+  left = TRUE
+)
+
+trajectory_f01_rooms <- st_join(
+  trajectory_f01,
+  floor_1_rooms %>% select(room_id),
+  join = st_covered_by,
+  left = TRUE
+)
+
+trajectory_f02_rooms <- st_join(
+  trajectory_f02,
+  floor_2_rooms %>% select(room_id),
+  join = st_covered_by,
+  left = TRUE
+)
+
+#merge the floors together
+trajectories_with_rooms <- bind_rows(
+  trajectory_f00_rooms,
+  trajectory_f01_rooms,
+  trajectory_f02_rooms
+)
+```
+
+```{r}
+# check how many points did not get assigned a room
+trajectories_with_rooms %>%
+  st_drop_geometry() %>%
+  summarise(
+    total_points = n(),
+    missing_room = sum(is.na(room_id)),
+    missing_room_pct = mean(is.na(room_id)) * 100
+  )
+```
+
+
+
+
+### OLD
 ```{r}
 # combine coordinates of walls
 walls <- map_dfr(plan$floors, function(floors) {
@@ -190,12 +275,6 @@ make_polygons <- function(floor_id, area_threshold = 5000) {
 polys_0 <- make_polygons(0)
 ```
 
-```{r}
-library(sf)
-library(rgdal)
-plan <- fromJSON("data/NMFA_3floors_plan.json", simplifyVector = FALSE)
-st_write(meuse_sf, "meuse.geojson")
-```
 
 
 
