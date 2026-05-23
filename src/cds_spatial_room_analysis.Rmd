@@ -920,6 +920,221 @@ write_csv(floor_route_structure, "../out/tables/floor_route_exploration_rate.csv
 #many n_branching_rooms	floor has many decision points
 ```
 
+# Plotting example pathways
+```{r}
+# function to plot an example pathway for a specific visitor on a specific floor
+# the function takes as input the visitor id, the floor number, and the palette
+# it visualizes the sequence of rooms visited by the visitor and the order of the visits using numbered arrows
+plot_example_pathway <- function(
+    visitor_id,
+    floor_no,
+    palette_loud
+) {
+  
+  floor_no <- as.integer(floor_no)
+  
+  pal <- palette_loud[[paste0("floor", floor_no)]]
+  
+  plan_floor <- floor_plans[[as.character(floor_no)]]
+  
+  rooms_floor <- rooms_all %>%
+    filter(floorNumber == floor_no)
+  
+  # get the pathway for this visitor on this floor
+  pathway <- room_episodes %>%
+    filter(id == visitor_id, floorNumber == floor_no) %>%
+    arrange(episode_id) %>%
+    mutate(
+      step = row_number(),
+      room_id = as.character(room_id)  # convert to character for joining
+    )
+  
+  if (nrow(pathway) == 0) {
+    stop(paste("No room visits found for visitor", visitor_id, "on floor", floor_no))
+  }
+  
+  # get the room centroids for the pathway
+  pathway_coords <- pathway %>%
+    left_join(
+      room_nodes %>%
+        filter(floorNumber == floor_no) %>%
+        select(room_id, x, y),
+      by = "room_id"
+    )
+  
+  # create line segments connecting consecutive rooms
+  if (nrow(pathway_coords) > 1) {
+    pathway_segments <- tibble(
+      x_from = pathway_coords$x[-nrow(pathway_coords)],
+      y_from = pathway_coords$y[-nrow(pathway_coords)],
+      x_to = pathway_coords$x[-1],
+      y_to = pathway_coords$y[-1],
+      from_room = pathway_coords$room_id[-nrow(pathway_coords)],
+      to_room = pathway_coords$room_id[-nrow(pathway_coords) + 1],
+      transition_order = 1:(nrow(pathway_coords) - 1)
+    )
+    
+    # calculate label positions near the arrow head (85% along the path)
+    pathway_segments <- pathway_segments %>%
+      mutate(
+        # vector from source to target
+        dx = x_to - x_from,
+        dy = y_to - y_from,
+        # place label at 85% along the path (near arrow head)
+        label_x = x_from + 0.85 * dx,
+        label_y = y_from + 0.85 * dy
+      )
+    
+    # identify repeated transitions and add horizontal offset for side-by-side numbers
+    transition_labels <- pathway_segments %>%
+      group_by(from_room, to_room) %>%
+      mutate(
+        transition_count = n_distinct(transition_order),
+        occurrence = row_number(),
+        # calculate position in sequence (for horizontal spacing)
+        position_in_sequence = row_number()
+      ) %>%
+      ungroup() %>%
+      # calculate horizontal offset perpendicular to the arrow direction
+      mutate(
+        dx_norm = x_to - x_from,
+        dy_norm = y_to - y_from,
+        arrow_length = sqrt(dx_norm^2 + dy_norm^2),
+        # normalize direction vector
+        dx_unit = dx_norm / arrow_length,
+        dy_unit = dy_norm / arrow_length,
+        # perpendicular vector (rotate 90 degrees)
+        perp_x = -dy_unit,
+        perp_y = dx_unit,
+        # horizontal spacing: center all numbers, then offset by position
+        center_offset = (position_in_sequence - (transition_count + 1) / 2) * 0.12,
+        label_x_final = label_x + center_offset * perp_x,
+        label_y_final = label_y + center_offset * perp_y
+      ) %>%
+      select(label_x_final, label_y_final, transition_order)
+  }
+  
+  # create the plot
+  p <- ggplot() +
+    geom_sf(
+      data = plan_floor,
+      fill = NA,
+      colour = "grey80",
+      linewidth = 0.3,
+      show.legend = FALSE
+    ) +
+    geom_sf(
+      data = rooms_floor,
+      fill = NA,
+      colour = "grey55",
+      linewidth = 0.4,
+      show.legend = FALSE
+    )
+  
+  # add pathway segments with arrows
+  if (nrow(pathway_coords) > 1) {
+    p <- p +
+      geom_segment(
+        data = pathway_segments,
+        aes(
+          x = x_from,
+          y = y_from,
+          xend = x_to,
+          yend = y_to
+        ),
+        colour = unname(pal["base"]),
+        linewidth = 1.2,
+        alpha = 0.7,
+        arrow = arrow(
+          length = unit(0.15, "inches"),
+          type = "closed",
+          angle = 20
+        )
+      ) +
+      # add transition order numbers near arrow head
+      geom_text(
+        data = transition_labels,
+        aes(x = label_x_final, y = label_y_final, label = transition_order),
+        colour = "black",
+        fontface = "bold",
+        size = 3.5,
+        show.legend = FALSE
+      )
+  }
+  
+  # add room points on the pathway
+  p <- p +
+    geom_point(
+      data = pathway_coords,
+      aes(x = x, y = y),
+      shape = 21,
+      fill = unname(pal["base"]),
+      colour = "white",
+      stroke = 1,
+      size = 4,
+      alpha = 0.9
+    ) +
+    geom_shadowtext(
+      data = pathway_coords,
+      aes(x = x, y = y, label = paste0("Room ", room_id)),
+      color = "#111111FF",
+      bg.color = "#FFFFFFFF",
+      bg.r = 0.12,
+      size = 2.5,
+      fontface = "bold",
+      vjust = -2,
+      show.legend = FALSE
+    )
+  
+  p +
+    coord_sf() +
+    theme_void() +
+    labs(
+      title = paste0("Example Pathway - Visitor ", visitor_id, " (Floor ", floor_no, ")"),
+      subtitle = paste0("Visited ", nrow(pathway_coords), " rooms in sequence")
+    ) +
+    theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      plot.subtitle = element_text(size = 11, hjust = 0.5, margin = margin(b = 5))
+    )
+}
+
+# example: plot a pathway for a visitor with the most room visits
+visitor_with_most_rooms <- room_episodes %>%
+  group_by(id) %>%
+  summarise(n_rooms = n(), .groups = "drop") %>%
+  slice_max(n_rooms, n = 1) %>%
+  pull(id) %>%
+  first()
+
+# get the floor with the most visits for this visitor
+visitor_floor <- room_episodes %>%
+  filter(id == visitor_with_most_rooms) %>%
+  group_by(floorNumber) %>%
+  summarise(n_rooms = n(), .groups = "drop") %>%
+  slice_max(n_rooms, n = 1) %>%
+  pull(floorNumber) %>%
+  first()
+
+# create the plot
+example_pathway_plot <- plot_example_pathway(
+  visitor_id = visitor_with_most_rooms,
+  floor_no = visitor_floor,
+  palette_loud = palette_loud
+)
+
+example_pathway_plot
+
+# save the plot
+ggsave(
+  filename = "../out/figures/example_pathway.png",
+  plot = example_pathway_plot,
+  width = 10,
+  height = 8,
+  dpi = 300
+)
+```
+
 # Inspecting route conformity to the physical layout of the rooms
 ```{r}
 # creating a data frame of the observed transitions between rooms for each visitor, including the order of the transitions and the floors of the rooms involved in the transitions, which allows us to analyze how closely visitors' actual movement patterns conform to the physical layout of the rooms and the possible transitions between them based on shared boundaries and adjacency
