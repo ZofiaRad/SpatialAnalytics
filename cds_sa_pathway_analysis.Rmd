@@ -11,6 +11,8 @@ knitr::opts_chunk$set(echo = TRUE)
 
 #loading in the packages
 ```{r}
+install.packages("Cairo")
+install.packages("ragg")
 library(pacman)
 pacman::p_load(tidyverse,
                readr,
@@ -19,7 +21,9 @@ pacman::p_load(tidyverse,
                sf,
                tidyr,
                ggdendro,
-               stats)
+               stats,
+               ggrastr,
+               patchwork)
 
 # not using CRS
 sf::sf_use_s2(FALSE)
@@ -110,7 +114,7 @@ trajectory_f2_filtered <- filter_trajectories_by_rooms(trajectory_f02, floor_2_r
 ## trajectory extraction and conversion
 ```{r}
 # extract and convert trajectories to LINESTRING per participant per floor
-eextract_trajectories_as_lines <- function(trajectory_data, floor_number) {
+extract_trajectories_as_lines <- function(trajectory_data, floor_number) {
   
   # filter by floor and sort by participant and timestamp
   floor_data <- trajectory_data %>%
@@ -208,6 +212,27 @@ calculate_distance_from_centroid <- function(trajectories, dist_matrix) {
 ```
 
 # VISUALISATION FUNCTIONS
+## colour pallett
+```{r}
+palette_loud <- list(
+  floor0 = c(dark = "#92113AFF", base = "#C1395EFF"),
+  floor1 = c(dark = "#DFA90DFF", base = "#FFD84AFF"),
+  floor2 = c(dark = "#5F7F00FF", base = "#AEC17BFF")
+)
+
+# get plot colour helper function
+get_floor_colors <- function(floor_name, palette_loud) {
+  # Handle different floor name formats
+  # "Floor 0" or "floor 0" or "floor_0" -> "floor0"
+  floor_key <- tolower(gsub("\\s+|_", "", floor_name))
+  if (!floor_key %in% names(palette_loud)) {
+    stop(paste("Unknown floor:", floor_name))
+  }
+  palette_loud[[floor_key]]
+}
+
+```
+
 ## heatmap of pathway distnaces (similarity)
 ```{r}
 # plot frechet distance heatmap with dendrogram
@@ -248,37 +273,58 @@ plot_distance_heatmap <- function(dist_matrix, clusters = NULL, floor_name = "Fl
       Trajectory2 = factor(Trajectory2, levels = colnames(dist_ordered))
     )
   
+  # get floor colors
+  floor_colors <- get_floor_colors(floor_name, palette_loud)
+  
   # create heatmap
   p <- ggplot(heatmap_data, aes(x = Trajectory2, y = Trajectory1, fill = Distance)) +
-    geom_tile() +
-    scale_fill_viridis_c(name = "Distance") +
-    theme_minimal() +
-    theme(
-      axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7),
-      axis.text.y = element_text(size = 7),
-      axis.title = element_blank(),
-      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
-    ) +
-    ggtitle(paste0(title_prefix, " - ", floor_name))
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "white",
+    mid = "grey90",
+    high = unname(floor_colors["base"]),
+    midpoint = median(heatmap_data$Distance, na.rm = TRUE)
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7),
+    axis.text.y = element_text(size = 7),
+    axis.title = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+  ) +
+  ggtitle(paste0(title_prefix, " - ", floor_name))
   
   return(p)
 }
 ```
 
-## heatmap of trajectory density (over the floorplan)
+## trajectory density heatmap (over the floorplan)
 ```{r}
 # plot trajectory density heatmap on floor
 plot_trajectory_density <- function(trajectory_data, floor_plan, floor_name = "Floor 0", bins = 30) {
   
   # extract coordinates
-  coords <- st_coordinates(trajectory_data)
+  coords <- st_coordinates(st_cast(trajectory_data, "POINT"))
   
   # create plot
+  floor_colors <- get_floor_colors(floor_name, palette_loud)
+
   p <- ggplot() +
     geom_sf(data = floor_plan, fill = "white", color = "black", size = 0.5) +
-    geom_bin2d(data = as.data.frame(coords), aes(x = X, y = Y), 
-               bins = bins, alpha = 0.7) +
-    scale_fill_viridis_c(name = "Point\nDensity", option = "plasma") +
+  
+    geom_bin2d(
+      data = as.data.frame(coords),
+      aes(x = X, y = Y),
+      bins = bins,
+      alpha = 0.7
+    ) +
+  
+    scale_fill_gradient(
+      low = "white",
+      high = unname(floor_colors["base"]),
+      name = "Point\nDensity"
+    ) +
+    
     theme_minimal() +
     theme(
       legend.position = "right",
@@ -287,7 +333,7 @@ plot_trajectory_density <- function(trajectory_data, floor_plan, floor_name = "F
       axis.ticks = element_blank()
     ) +
     labs(title = paste0("Movement Density - ", floor_name))
-  
+    
   return(p)
 }
 ```
@@ -297,15 +343,27 @@ plot_trajectory_density <- function(trajectory_data, floor_plan, floor_name = "F
 plot_trajectory_density_scatter <- function(trajectory_data, floor_plan, 
                                            floor_name = "Floor 0") {
   
-  # Create plot
+  floor_colors <- get_floor_colors(floor_name, palette_loud)
+  
+  # create plot
   p <- ggplot() +
     geom_sf(data = floor_plan, fill = "white", color = "black", size = 0.5) +
-    geom_sf(data = trajectory_data, color = "darkblue", alpha = 0.15, size = 0.8) +
+    geom_sf(
+      data = trajectory_data,
+      color = unname(floor_colors["base"]),
+      alpha = 0.15,
+      size = 0.8
+    ) +
+    coord_sf(expand = FALSE) +
     theme_minimal() +
     theme(
-      plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold", margin = margin(b = 10)),
       axis.text = element_blank(),
-      axis.ticks = element_blank()
+      axis.ticks = element_blank(),
+      axis.title = element_blank(),
+      panel.grid = element_blank(),
+      panel.background = element_blank(),
+      plot.margin = margin(0, 0, 0, 0)
     ) +
     labs(title = paste0("Movement Density (Point Scatter) - ", floor_name),
          caption = "Darker areas = more overlapping points")
@@ -317,24 +375,39 @@ plot_trajectory_density_scatter <- function(trajectory_data, floor_plan,
 ## density distributions
 ```{r}
 plot_distance_distributions <- function(metrics_list) {
+  
   comparison_data <- data.frame(
     floor = rep(names(metrics_list), 
                 times = sapply(metrics_list, function(x) length(x$all_distances))),
     distance = unlist(lapply(metrics_list, function(x) x$all_distances))
   )
   
+  # Convert floor_0 format to Floor 0 for display
+  comparison_data$floor_display <- sapply(comparison_data$floor, function(f) {
+    paste0("Floor ", substr(f, nchar(f), nchar(f)))
+  })
+  
+  floor_fill_palette <- c(
+    floor_0 = unname(palette_loud$floor0["base"]),
+    floor_1 = unname(palette_loud$floor1["base"]),
+    floor_2 = unname(palette_loud$floor2["base"])
+  )
+  
   ggplot(comparison_data, aes(x = distance, fill = floor)) +
     geom_histogram(alpha = 0.5, bins = 30, position = "identity") +
-    geom_density(alpha = 0.3, size = 1) +
-    facet_wrap(~floor, ncol = 3) +
-    scale_fill_brewer(palette = "Set2") +
+    geom_density(alpha = 0.3, linewidth = 1) +
+    
+    facet_wrap(~floor_display, ncol = 3) +
+    
+    scale_fill_manual(values = floor_fill_palette) +
+    
     theme_minimal() +
     theme(
       legend.position = "none",
-      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+      strip.text = element_text(face = "bold")
     ) +
     labs(
-      title = "Distribution of Trajectory Distances per Floor",
+      #title = "Distribution of Trajectory Distances per Floor",
       x = "Fréchet Distance",
       y = "Frequency"
     )
@@ -358,11 +431,24 @@ plot_cv_comparison <- function(metrics_list) {
     ci_upper = cv_ci_upper
   )
   
+  # Map floor names to palette keys (floor_0 -> floor0, floor_1 -> floor1, etc.)
+  palette_map <- list(
+    floor_0 = palette_loud$floor0["base"],
+    floor_1 = palette_loud$floor1["base"],
+    floor_2 = palette_loud$floor2["base"]
+  )
+  
+  fill_values <- setNames(
+    sapply(cv_df$floor, function(f) unname(palette_map[[f]])),
+    cv_df$floor
+  )
+  
   ggplot(cv_df, aes(x = floor, y = cv, fill = floor)) +
-    geom_col(alpha = 0.7) +
-    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), 
-                  width = 0.2, size = 1, color = "black") +
-    scale_fill_brewer(palette = "Set2") +
+    geom_col(alpha = 0.8) +
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+    
+    scale_fill_manual(values = fill_values) +
+    
     theme_minimal() +
     theme(
       legend.position = "none",
@@ -404,18 +490,36 @@ plot_cv_bootstrap_distributions <- function(metrics_list) {
         cv_diffs[b] <- cv1_boot - cv2_boot
       }
       
+      # Convert floor_0 format to Floor 0 for display
+      floor_i_display <- paste0("Floor ", substr(floor_names[i], nchar(floor_names[i]), nchar(floor_names[i])))
+      floor_j_display <- paste0("Floor ", substr(floor_names[j], nchar(floor_names[j]), nchar(floor_names[j])))
+      comparison_label <- paste0(floor_i_display, " vs ", floor_j_display)
+      
       boot_data <- rbind(boot_data, data.frame(
-        comparison = paste0(floor_names[i], " vs ", floor_names[j]),
+        comparison = comparison_label,
         cv_diff = cv_diffs
       ))
     }
   }
   
+  # Create palette with matching comparison labels
+  palette_loud <- list(
+    floor0 = c(dark = "#92113AFF", base = "#C1395EFF"),
+    floor1 = c(dark = "#DFA90DFF", base = "#FFD84AFF"),
+    floor2 = c(dark = "#5F7F00FF", base = "#AEC17BFF")
+  )
+  
+  boot_palette <- c(
+    "Floor 0 vs Floor 1" = unname(palette_loud$floor0["base"]),
+    "Floor 0 vs Floor 2" = unname(palette_loud$floor0["base"]),
+    "Floor 1 vs Floor 2" = unname(palette_loud$floor1["base"])
+  )
+  
   ggplot(boot_data, aes(x = cv_diff, fill = comparison)) +
     geom_density(alpha = 0.6) +
     geom_vline(xintercept = 0, linetype = "dashed", size = 1, color = "red") +
     facet_wrap(~comparison) +
-    scale_fill_brewer(palette = "Set2") +
+    scale_fill_manual(values = boot_palette) +
     theme_minimal() +
     theme(
       legend.position = "none",
@@ -534,6 +638,7 @@ metrics_list <- list(floor_0 = metrics_f0, floor_1 = metrics_f1, floor_2 = metri
 ```{r}
 cv_stats <- compare_cv_statistically(metrics_list)
 ```
+
 # RESULTS - VISUALISATION
 ```{r}
 # trajectory similarity
@@ -558,12 +663,26 @@ p_distributions <- plot_distance_distributions(metrics_list)
 p_cv <- plot_cv_comparison(metrics_list)
 p_cv_boot <- plot_cv_bootstrap_distributions(metrics_list)
 
-# show
-p_heatmap_f0
-p_density_f0
-p_scatter_f0
-p_distributions
-p_cv
-p_cv_boot
-```
+# combined scatter density plot
+combined_plot <- (p_density_scatter_f0 | p_density_scatter_f1 | p_density_scatter_f2) +
+  plot_layout(
+    ncol = 3,
+    widths = c(1, 1, 1)
+  ) +
+  plot_annotation(
+    title = "Movement Density (Point Scatter)",
+    theme = theme(
+      plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+      plot.margin = margin(0, 0, 10, 0)
+    )
+  ) &
+  theme(
+    plot.margin = margin(0, 2, 0, 2)
+  )
+
+combined_plot
+
+combined_plot
+
+combined_plot
 
