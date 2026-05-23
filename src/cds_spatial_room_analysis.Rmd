@@ -32,22 +32,22 @@ drop_crs <- function(x) {
 }
 
 # loading trajectory data and drop CRS
-geo_trajectories <- st_read("data/all_trajectories_with_floor.geojson")
+geo_trajectories <- st_read("../data/all_trajectories_with_floor.geojson")
 geo_trajectories$floorNumber <- as.integer(geo_trajectories$floorNumber)
 geo_trajectories <- drop_crs(geo_trajectories)
 
 #room plan and drop CRS
-floor_0_plan_sf <- st_read("data/geojson_converted_objects/floor_0_all_objects.geojson")
-floor_1_plan_sf <- st_read("data/geojson_converted_objects/floor_1_all_objects.geojson")
-floor_2_plan_sf <- st_read("data/geojson_converted_objects/floor_2_all_objects.geojson")
+floor_0_plan_sf <- st_read("../data/geojson_converted_objects/floor_0_all_objects.geojson")
+floor_1_plan_sf <- st_read("../data/geojson_converted_objects/floor_1_all_objects.geojson")
+floor_2_plan_sf <- st_read("../data/geojson_converted_objects/floor_2_all_objects.geojson")
 floor_0_plan_sf <- drop_crs(floor_0_plan_sf)
 floor_1_plan_sf <- drop_crs(floor_1_plan_sf)
 floor_2_plan_sf <- drop_crs(floor_2_plan_sf)
 
 #room plan - polygons and drop CRS
-floor_0_rooms <- st_read("data/polygons/polygons_floor_0.geojson")
-floor_1_rooms <- st_read("data/polygons/polygons_floor_1.geojson")
-floor_2_rooms <- st_read("data/polygons/polygons_floor_2.geojson")
+floor_0_rooms <- st_read("../data/polygons/polygons_floor_0.geojson")
+floor_1_rooms <- st_read("../data/polygons/polygons_floor_1.geojson")
+floor_2_rooms <- st_read("../data/polygons/polygons_floor_2.geojson")
 floor_0_rooms <- drop_crs(floor_0_rooms)
 floor_1_rooms <- drop_crs(floor_1_rooms)
 floor_2_rooms <- drop_crs(floor_2_rooms)
@@ -76,7 +76,7 @@ trajectory_f02 <- geo_trajectories %>%
   dplyr::filter(.data$floorNumber == 2)
 
 #read artworks data
-artworks <- read_csv("data/museum_walls_plans/artworks_dataset.csv") %>%
+artworks <- read_csv("../data/museum_walls_plans/artworks_dataset.csv") %>%
   select(image_id, floor, room_id, painting_name, artist, Type) %>%
   mutate(
     floorNumber = as.integer(floor),
@@ -556,7 +556,7 @@ mean_time_correlations <- map_dfr(vars_to_correlate, function(var) {
 mean_time_correlations
 
 # export to csv
-write_csv(mean_time_correlations, "out/mean_room_visit_time_correlations.csv")
+write_csv(mean_time_correlations, "../out/mean_room_visit_time_correlations.csv")
 ```
 
 # Floor plan
@@ -818,7 +818,7 @@ combined_plot
 
 # save and export combined_plot
 ggsave(
-  filename = "out/figures/room_transition_networks_combined.png",
+  filename = "../out/figures/room_transition_networks_combined.png",
   plot = combined_plot,
   width = 10,
   height = 15,
@@ -913,7 +913,7 @@ floor_route_structure <- branching_points %>%
 floor_route_structure
 
 # export the floor_route_structure to csv
-write_csv(floor_route_structure, "out/floor_route_exploration_rate.csv")
+write_csv(floor_route_structure, "../out/floor_route_exploration_rate.csv")
 
 #high mean_dominant_share	floor produces similar routes
 #high mean_transition_entropy	floor allows diverse exploration
