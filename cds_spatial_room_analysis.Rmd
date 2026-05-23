@@ -86,7 +86,7 @@ artworks <- read_csv("data/museum_walls_plans/artworks_dataset.csv") %>%
   select(painting_name, floorNumber, room_id, type, artist)
 ```
 
-# Room and trajectories combine
+# Combine Room polygons and Floor trajectories
 ```{r}
 #combine trajectories with rooms for each floor
 trajectory_f00_rooms <- st_join(
@@ -136,7 +136,7 @@ trajectories_with_rooms %>%
 trajectories_with_rooms <- trajectories_with_rooms %>%
   mutate(timestamp = as.numeric(timestamp))
 
-# making room episodes
+# making room episodes - one row for each room visit - times when a person enters and exits a room, with the duration of the visit in that room
 room_episodes <- trajectories_with_rooms %>%
   st_drop_geometry() %>%
   arrange(id, timestamp) %>%
@@ -154,7 +154,7 @@ room_episodes <- trajectories_with_rooms %>%
     .groups = "drop"
   )
 
-# making room transitions
+# making room transitions - each row represents a transition from one room to another, with the order of the transition for each visitor, and the floors of the rooms involved in the transition
 room_transitions <- room_episodes %>%
   arrange(id, episode_id) %>%
   group_by(id) %>%
@@ -168,13 +168,18 @@ room_transitions <- room_episodes %>%
   filter(!is.na(to_room)) %>%
   ungroup()
 
+# counting the number of transitions between each pair of rooms on the same floor
 transition_counts <- room_transitions %>%
   count(from_floor, from_room, to_floor, to_room, sort = TRUE)
 
+# inspecting
 transition_counts
 ```
 
+
+# Centroid Creation for Network Visualization
 ```{r}
+# combine all floors that were separately processed for rooms as a prep for making centroids
 rooms_all <- bind_rows(
   floor_0_rooms %>% mutate(floorNumber = 0),
   floor_1_rooms %>% mutate(floorNumber = 1),
@@ -187,11 +192,14 @@ rooms_all <- bind_rows(
   ) %>%
   st_make_valid()
 
+# create centroids that will serve as node coordinates in the network visualizations, we use the centroids of the room polygons as the coordinates for the nodes in our room transition networks
 room_nodes_sf <- rooms_all %>%
   mutate(geometry = st_centroid(geometry))
 
+# getting the x and y coordinates of the centroids
 coords <- st_coordinates(room_nodes_sf)
 
+# adding the x and y coordinates to the room_nodes data frame, and selecting only the relevant columns for the nodes in our network visualizations
 room_nodes <- room_nodes_sf %>%
   mutate(
     x = coords[, 1],
@@ -202,9 +210,10 @@ room_nodes <- room_nodes_sf %>%
 
 ```
 
-```{r}
-# ---------- observed directed transitions ----------
 
+# Observed directed transitions
+```{r}
+# within one floor counting the number of observed transitions between each pair of rooms across all visitors - this gives us the directed edges for our room transition networks, where each edge represents a transition from one room to another, and the weight of the edge is the number of times that transition was observed in our data
 edges_directed <- transition_counts %>%
   filter(from_floor == to_floor) %>%
   transmute(
@@ -215,9 +224,9 @@ edges_directed <- transition_counts %>%
   )
 ```
 
+# Making sure to only keep physically possible edges
 ```{r}
-# ---------- physical adjacency constraints ----------
-
+# filter to only keep edges that represent physically possible transitions between rooms based on the layout of the rooms and their shared boundaries
 make_floor_adjacency <- function(rooms_all, floor_no, min_shared_length = 0.01) {
   
   rooms_floor <- rooms_all %>%
@@ -256,12 +265,14 @@ make_floor_adjacency <- function(rooms_all, floor_no, min_shared_length = 0.01) 
   })
 }
 
+# through manual checking, some transitions were still kept that are not physically possible, so they are mnanually removed
 blocked_pairs <- tibble::tribble(
   ~floorNumber, ~room_a, ~room_b,
   0, "13", "16",
   0, "11", "15"
 )
 
+# create a dataframe of the remaining physically possible transitions
 allowed_pairs <- map_dfr(
   sort(unique(rooms_all$floorNumber)),
   ~ make_floor_adjacency(rooms_all, .x)
@@ -270,9 +281,10 @@ allowed_pairs <- map_dfr(
   distinct(floorNumber, room_a, room_b, shared_length)
 ```
 
-```{r}
-# ---------- check and filter observed edges ----------
 
+# Check and filter observed edges
+```{r}
+# keeping only the valid edges for our network visualizations, so we first join it with the allowed_pairs df
 edges_directed_checked <- edges_directed %>%
   mutate(
     room_a = pmin(from_room, to_room),
@@ -287,13 +299,16 @@ edges_directed_checked <- edges_directed %>%
     is_physically_possible = replace_na(is_physically_possible, FALSE)
   )
 
+# filter based on physical possibility
 edges_directed_valid <- edges_directed_checked %>%
   filter(is_physically_possible) %>%
   select(floorNumber, from_room, to_room, transition_count)
 ```
 
+
+# Check how many transitions (edges) were dropped
 ```{r}
-# ---------- check how many were dropped ----------
+# create summary of the dropped edges across all floors, to understand the overall impact of filtering out physically impossible transitions on our data and network visualizations
 dropped_by_floor <- edges_directed_checked %>%
   group_by(floorNumber) %>%
   summarise(
@@ -305,25 +320,27 @@ dropped_by_floor <- edges_directed_checked %>%
   )
 
 dropped_by_floor
-sum(!edges_directed_checked$is_physically_possible)
-sum(edges_directed_checked$is_physically_possible)
+
+# create summary of the dropped edges across all floors, to understand the overall impact of filtering out physically impossible transitions on our data and network visualizations
+sum(!edges_directed_checked$is_physically_possible) # how many edges were dropped in total
+sum(edges_directed_checked$is_physically_possible) # how many edges were kept in total
 
 dropped_edges <- edges_directed_checked %>%
   filter(!is_physically_possible)
   
 dropped_edges
-sum(edges_directed_checked$transition_count[!edges_directed_checked$is_physically_possible], na.rm = TRUE)
 
-sum(edges_directed_checked$transition_count[edges_directed_checked$is_physically_possible], na.rm = TRUE)
+sum(edges_directed_checked$transition_count[!edges_directed_checked$is_physically_possible], na.rm = TRUE) # how many observations of transitions were dropped in total
 
-# removed 305 observation transitions (2096 remain)
-# removed 39 edges (104 remain), so 39 impossible types of transitions - these were present 305 times
+sum(edges_directed_checked$transition_count[edges_directed_checked$is_physically_possible], na.rm = TRUE) # how many observations of transitions were kept in total
+
+# removed 191 observation transitions (2210 remain)
+# removed 36 edges (104 remain), so 36 impossible types of transitions - these were present 191 times
 ```
 
-
+# Node Metrics
 ```{r}
-# ---------- node metrics ----------
-
+# creating for each room on each floor the following metrics related to visits and visitors and time spent: total time spent in the room across all visitors, number of unique visitors who entered the room, number of visits to the room (counting multiple visits by the same visitor), mean duration of visits to the room, and normalised time spent in the room by its area
 node_time <- room_episodes %>%
   mutate(
     floorNumber = as.integer(floorNumber),
@@ -339,6 +356,7 @@ node_time <- room_episodes %>%
     normalised_time_by_area = total_time_sec / unique(room_area)
   )
 
+# creating for each room on each floor the following metrics related to transitions: number of incoming transitions (number of times visitors entered the room from another room), number of outgoing transitions (number of times visitors left the room to go to another room), and total number of transitions involving the room (sum of incoming and outgoing transitions)
 node_transition_importance <- bind_rows(
   edges_directed_valid %>%
     transmute(
@@ -364,7 +382,9 @@ node_transition_importance <- bind_rows(
   )
 ```
 
+# Combining all Nodes metrics
 ```{r}
+# function to perform min-max normalization, which scales the values of a variable to a range between 0 and 1
 minmax <- function(x) {
   if (all(is.na(x)) || length(unique(na.omit(x))) <= 1) {
     return(rep(0.5, length(x)))
@@ -372,6 +392,7 @@ minmax <- function(x) {
   scales::rescale(x, to = c(0, 1), na.rm = TRUE)
 }
 
+# combining all of the previously defined metrics concerning nodes and adding a scaled score for the importance of the room in the transition network by using weights of different scaled variables
 nodes <- room_nodes %>%
   left_join(node_time, by = c("floorNumber", "room_id")) %>%
   left_join(node_transition_importance, by = c("floorNumber", "room_id")) %>%
@@ -396,9 +417,9 @@ nodes <- room_nodes %>%
   ungroup()
 ```
 
-
+# Helper for adding edge coordinates
 ```{r}
-# ---------- helper for adding edge coordinates ----------
+# adding the coordinates of the centroids of the rooms to the edges data frame, which allows us to plot the edges as lines between the centroids of the rooms in our network visualizations
 add_edge_coords <- function(edges, from_col, to_col, nodes) {
   edges %>%
     left_join(
@@ -417,6 +438,7 @@ add_edge_coords <- function(edges, from_col, to_col, nodes) {
     )
 }
 
+# for the directed edges, we keep all the observed transitions between rooms
 edges_directed_xy_valid <- edges_directed_valid %>%
   add_edge_coords(
     from_col = "from_room",
@@ -424,6 +446,7 @@ edges_directed_xy_valid <- edges_directed_valid %>%
     nodes = room_nodes
   )
 
+# for the undirected edges, we combine the transitions in both directions between pairs of rooms, so that we can plot them as undirected edges in our network visualizations
 edges_undirected_valid <- edges_directed_valid %>%
   mutate(
     room_a = pmin(from_room, to_room),
@@ -436,6 +459,7 @@ edges_undirected_valid <- edges_directed_valid %>%
   ) %>%
   filter(room_a != room_b)
 
+# adding the coordinates of the centroids of the rooms to the undirected edges data frame, which allows us to plot the edges as lines between the centroids of the rooms in our network visualizations
 edges_undirected_xy_valid <- edges_undirected_valid %>%
   add_edge_coords(
     from_col = "room_a",
@@ -444,7 +468,9 @@ edges_undirected_xy_valid <- edges_undirected_valid %>%
   )
 ```
 
+# Number of next rooms calculation
 ```{r}
+# calculating number of next rooms for each room, which gives us an idea of how many different rooms visitors go to after visiting a given room, and can be used as a measure of the branching factor or connectivity of the room in the transition network
 n_nextrooms <- edges_directed_valid %>%
   group_by(floorNumber, from_room) %>%
   summarise(
@@ -453,7 +479,7 @@ n_nextrooms <- edges_directed_valid %>%
 
 # Influencing factors for time spent in a room
 ```{r}
-# add artworks counts to nodes 
+# add number of artworks per room to the nodes 
 artworks_count <- artworks %>%
   group_by(floorNumber, room_id) %>%
   summarise(
@@ -461,6 +487,7 @@ artworks_count <- artworks %>%
     .groups = "drop"
   )
 
+# add it to nodes
 nodes <- nodes %>%
   left_join(
     artworks_count,
@@ -470,7 +497,7 @@ nodes <- nodes %>%
     n_artworks = replace_na(n_artworks, 0)
   )
 
-# add next room counts to nodes 
+# add number of rooms people can go to from each room to nodes 
 n_nextrooms <- edges_directed_valid %>%
   group_by(floorNumber, from_room) %>%
   summarise(
@@ -479,6 +506,7 @@ n_nextrooms <- edges_directed_valid %>%
   ) %>%
   mutate(room_id = from_room)
 
+# add it to nodes
 nodes <- nodes %>%
   left_join(
     n_nextrooms,
@@ -487,7 +515,7 @@ nodes <- nodes %>%
     n_next_rooms = replace_na(n_next_rooms, 0)
   )
 
-# correlating
+# selecting variables to correlate
 vars_to_correlate <- nodes %>%
   select(
     room_area,
@@ -498,6 +526,7 @@ vars_to_correlate <- nodes %>%
   ) %>%
   names()
 
+# correlating variables with mean time spent in the room using Spearman correlation, which allows us to understand how different factors such as room size, popularity, connectivity, and number of artworks are associated with the average time visitors spend in each room
 mean_time_correlations <- map_dfr(vars_to_correlate, function(var) {
   
   tmp <- nodes %>%
@@ -523,14 +552,14 @@ mean_time_correlations <- map_dfr(vars_to_correlate, function(var) {
 }) %>%
   arrange(desc(abs(spearman_rho)))
 
+# inspecting variable
 mean_time_correlations
 
 # export to csv
 write_csv(mean_time_correlations, "out/mean_room_visit_time_correlations.csv")
-
 ```
 
-
+# Floor plan
 ```{r}
 # overview of floor plans for visualization, we create a list of the floor plan spatial data frames for each floor, which allows us to easily access and plot the floor plans in our network visualizations. This is important for providing context to the room transition networks and understanding how the rooms are arranged within the building.
 floor_plans <- list(
@@ -540,8 +569,9 @@ floor_plans <- list(
 )
 ```
 
+# Plotting the nodes and edges network for each floor
 ```{r}
-# plotting function
+# setting the color palette for the network visualizations
 palette_loud <- list(
   floor0 = c(
     dark = "#92113AFF",
@@ -557,6 +587,8 @@ palette_loud <- list(
   )
 )
 
+# function to plot the room transition network for a given floor, which allows us to visualize the structure of the transitions between rooms on each floor, and how they relate to the layout of the building and the characteristics of the rooms
+# the function takes as input the floor number, whether to plot directed or undirected edges (current code primarily supports undirected), which node metric to use for sizing and coloring the nodes, and what percentage of the top edges to keep in the visualization based on their transition counts
 plot_room_network <- function(
     floor_no,
     directed = FALSE,
@@ -584,7 +616,7 @@ plot_room_network <- function(
   if (top_edges_prop <= 0 || top_edges_prop > 1) {
     stop("top_edges_pct must be between 1 and 100.")
   }
-  
+  # for directed edges, we keep all the observed transitions between rooms, while for undirected edges, we combine the transitions in both directions between pairs of rooms, so that we can plot them as undirected edges in our network visualizations
   if (directed) {
     edges_floor <- edges_directed_xy_valid %>%
       filter(floorNumber == floor_no) %>%
@@ -686,6 +718,7 @@ plot_room_network <- function(
       fontface = "bold",
       show.legend = FALSE
     ) +
+    # adding custom legends for node fill, node size, and edge width, with consistent ordering and   styling
     scale_fill_gradient(
       name = "Rooms: normalised time spent",
       low = pal["base"],
@@ -741,7 +774,9 @@ plot_room_network <- function(
 }
 ```
 
+# Calling the plot function
 ```{r}
+# creating plots for each floor
 floor0_plot <- plot_room_network(
   floor_no = 0,
   directed = FALSE,
@@ -760,7 +795,7 @@ floor2_plot <- plot_room_network(
   node_metric = "normalised_time_by_area"
 )
 
-# combine the three plots and facet wrap them
+# combine the three floor plots and facet wrap them
 combined_plot <- (floor0_plot / floor1_plot / floor2_plot) +
   plot_layout(
     ncol = 1,
@@ -778,9 +813,10 @@ combined_plot <- (floor0_plot / floor1_plot / floor2_plot) +
     legend.position = "right"
   )
 
+# visually inspect
 combined_plot
 
-# export combined_plot to file
+# save and export combined_plot
 ggsave(
   filename = "out/figures/room_transition_networks_combined.png",
   plot = combined_plot,
@@ -791,7 +827,7 @@ ggsave(
 ```
 
  ```{r}
-# not looking into directed networks
+# not looking into directed networks, so it is commented out
 # plot_room_network(
 #   floor_no = 0,
 #   directed = TRUE,
@@ -811,24 +847,23 @@ ggsave(
 # )
 ```
 
-
-# RQ: Room hubs and if more time is more spent stopping / transitioning in certain rooms
+# Inspecting the top rooms (nodes) ranked based on different aspects
 ```{r}
-# getting max number of transition nodes to find the centroids potentially
+# getting max number of transitions for each floor, which allows us to identify the rooms that are most central or important in terms of visitor movement and transitions between rooms on each floor
 nodes %>%
   group_by(floorNumber) %>%
   slice_max(total_transitions, n = 3) %>%
   ungroup() %>%
   select(floorNumber, room_id, total_transitions, x, y)
 
-# getting rooms with most dwell time
+# getting rooms with most dwell time across all visitors, which allows us to identify the rooms that are most engaging or interesting to visitors in terms of the total amount of time they spend in those rooms across all visits
 nodes %>%
   group_by(floorNumber) %>%
   slice_max(total_time_sec, n = 3) %>%
   ungroup() %>%
   select(floorNumber, room_id, total_time_sec, x, y)
 
-# getting rooms with largest dwell time on average
+# getting rooms with largest dwell time on average per visit, which allows us to identify the rooms that are most engaging or interesting to visitors in terms of the average amount of time they spend in those rooms per visit
 nodes %>%
   group_by(floorNumber) %>%
   slice_max(mean_duration_sec, n = 3) %>%
@@ -836,8 +871,9 @@ nodes %>%
   select(floorNumber, room_id, mean_duration_sec, x, y)
 ```
 
-
+# Inspecting branching rooms (edges)
 ```{r}
+# for each room on each floor, calculating the number of different rooms that visitors go to after visiting that room (n_next_rooms), the most common next room and its share among all transitions from that room (dominant_next_room and dominant_share), the entropy of the distribution of next rooms (transition_entropy), and the total number of transitions from that room (total_transitions), which allows us to identify rooms that function as branching points in the transition network, where visitors have multiple different paths they can take after visiting that room
 branching_points <- edges_directed_valid %>%
   group_by(floorNumber, from_room) %>%
   mutate(
@@ -861,7 +897,9 @@ branching_points
 #high n_next_rooms = room functions as a branching point
 ```
 
+# Inspecting how the branching structure of the routes is affected by the floor layout
 ```{r}
+# Creating a summary of the branching structure of the routes for each floor, following the strucure used for room branches: by calculating the mean share of the dominant next room (mean_dominant_share), mean entropy of the distribution of next rooms (mean_transition_entropy), mean number of different next rooms (mean_next_rooms), and total number of branching rooms (n_branching_rooms) for each floor, which allows us to compare the overall branching structure of visitor routes across different floors and understand how the layout and design of each floor may influence visitor movement and exploration patterns
 floor_route_structure <- branching_points %>%
   group_by(floorNumber) %>%
   summarise(
@@ -882,8 +920,9 @@ write_csv(floor_route_structure, "out/floor_route_exploration_rate.csv")
 #many n_branching_rooms	floor has many decision points
 ```
 
-
+# Inspecting route conformity to the physical layout of the rooms
 ```{r}
+# creating a data frame of the observed transitions between rooms for each visitor, including the order of the transitions and the floors of the rooms involved in the transitions, which allows us to analyze how closely visitors' actual movement patterns conform to the physical layout of the rooms and the possible transitions between them based on shared boundaries and adjacency
 visitor_transitions <- room_episodes %>%
   mutate(
     floorNumber = as.integer(floorNumber),
@@ -911,6 +950,7 @@ visitor_transitions <- room_episodes %>%
     to_room
   )
 
+# filtering the observed transitions to only keep those that represent physically possible transitions between rooms based on the layout of the rooms and their shared boundaries
 visitor_transitions_valid <- visitor_transitions %>%
   mutate(
     room_a = pmin(from_room, to_room),
@@ -921,6 +961,7 @@ visitor_transitions_valid <- visitor_transitions %>%
     by = c("floorNumber", "room_a", "room_b")
   )
 
+# calculating the share of each next room among all transitions from the same room on the same floor
 edge_popularity <- edges_directed_valid %>%
   group_by(floorNumber) %>%
   mutate(
@@ -928,6 +969,7 @@ edge_popularity <- edges_directed_valid %>%
   ) %>%
   ungroup()
 
+# for each visitor and floor, calculating the mean share of the dominant next room among the transitions they made
 route_conformity <- visitor_transitions_valid %>%
   left_join(
     edge_popularity,
@@ -940,10 +982,6 @@ route_conformity <- visitor_transitions_valid %>%
     .groups = "drop"
   )
 
+# inspecting
 route_conformity 
 ```
-
-
-
-
-
