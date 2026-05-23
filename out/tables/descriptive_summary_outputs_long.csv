@@ -1,0 +1,71 @@
+summary_table,variable,value
+age_distribution,mean,32.8627450980392
+age_distribution,median,28
+age_distribution,sd,14.3415753776817
+gender_distribution,gender,man
+gender_distribution,count,27
+gender_distribution,gender,non_binary
+gender_distribution,count,1
+gender_distribution,gender,woman
+gender_distribution,count,23
+nationality_distribution,nationality,American
+nationality_distribution,count,1
+nationality_distribution,nationality,Brazilian
+nationality_distribution,count,1
+nationality_distribution,nationality,Lebanese
+nationality_distribution,count,2
+nationality_distribution,nationality,Syrian
+nationality_distribution,count,1
+nationality_distribution,nationality,belgian
+nationality_distribution,count,1
+nationality_distribution,nationality,chinese
+nationality_distribution,count,2
+nationality_distribution,nationality,french
+nationality_distribution,count,39
+nationality_distribution,nationality,german
+nationality_distribution,count,2
+nationality_distribution,nationality,russian and german
+nationality_distribution,count,1
+nationality_distribution,nationality,senegalese
+nationality_distribution,count,1
+education,diploma,A levels
+education,count,12
+education,diploma,"BA, BS/BSc"
+education,count,3
+education,diploma,BTEC Higher National Diploma
+education,count,6
+education,diploma,"Master's Degree, MS/MSc"
+education,count,20
+education,diploma,Middle school
+education,count,2
+education,diploma,No diploma
+education,count,1
+education,diploma,PhD
+education,count,6
+education,diploma,"Youth Training, BTEC First Diploma, NVQ Level 1-2"
+education,count,1
+motivation,motiv_curiosity,30
+motivation,motiv_else,24
+motivation,motiv_familyOut,14
+motivation,motiv_price,10
+motivation,motiv_schoolOut,3
+motivation,motiv_weather,3
+goal,visitGoal_surprised,13
+goal,visitGoal_else,4
+goal,visitGoal_explore,40
+goal,visitGoal_inspiration,19
+goal,visitGoal_fun,20
+goal,visitGoal_interact,2
+goal,visitGoal_learn,23
+goal,visitGoal_noGoal,5
+goal,visitGoal_SeeAgain,16
+goal,visitGoal_mindOff,18
+duration,mean,3399.64705882353
+duration,median,3398
+duration,sd,1060.16456880108
+distance,mean,82671.0116524551
+distance,median,84280.4148064488
+distance,sd,20056.1650594611
+items_seen,mean,141.254901960784
+items_seen,median,131
+items_seen,sd,54.8564829850602

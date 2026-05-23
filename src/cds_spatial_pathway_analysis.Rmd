@@ -1,0 +1,692 @@
+---
+title: 'CDS Spatial Analytics Exam: Pathway Comparison'
+author: "Zofia Radwańska"
+date: "2026-05-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#loading in the packages
+```{r}
+install.packages("Cairo")
+install.packages("ragg")
+library(pacman)
+pacman::p_load(tidyverse,
+               readr,
+               dplyr,
+               ggplot2,
+               sf,
+               tidyr,
+               ggdendro,
+               stats,
+               ggrastr,
+               patchwork)
+
+# not using CRS
+sf::sf_use_s2(FALSE)
+drop_crs <- function(x) {
+  st_crs(x) <- NA
+  x
+}
+```
+
+# LOADING DATA
+```{r}
+# loading trajectory data and drop CRS
+geo_trajectories <- st_read("data/all_trajectories_with_floor.geojson")
+geo_trajectories$floorNumber <- as.integer(geo_trajectories$floorNumber)
+geo_trajectories <- drop_crs(geo_trajectories)
+
+
+#floor plan + drop crs
+floor_0_plan_sf <- st_read("data/geojson_converted_objects/floor_0_all_objects.geojson")
+floor_1_plan_sf <- st_read("data/geojson_converted_objects/floor_1_all_objects.geojson")
+floor_2_plan_sf <- st_read("data/geojson_converted_objects/floor_2_all_objects.geojson")
+floor_0_plan_sf <- drop_crs(floor_0_plan_sf)
+floor_1_plan_sf <- drop_crs(floor_1_plan_sf)
+floor_2_plan_sf <- drop_crs(floor_2_plan_sf)
+
+#room plan - polygons and drop CRS
+floor_0_rooms <- st_read("data/polygons/polygons_floor_0.geojson")
+floor_1_rooms <- st_read("data/polygons/polygons_floor_1.geojson")
+floor_2_rooms <- st_read("data/polygons/polygons_floor_2.geojson")
+floor_0_rooms <- drop_crs(floor_0_rooms)
+floor_1_rooms <- drop_crs(floor_1_rooms)
+floor_2_rooms <- drop_crs(floor_2_rooms)
+
+#renaming columns
+floor_0_rooms <- floor_0_rooms %>% select(room_id, geometry)
+floor_1_rooms <- floor_1_rooms %>% mutate(room_id = floor_plan)
+floor_1_rooms <- floor_1_rooms %>% select(room_id, geometry)
+floor_2_rooms <- floor_2_rooms %>% mutate(room_id = fid)
+floor_2_rooms <- floor_2_rooms %>% select(room_id, geometry)
+
+plot(st_geometry(floor_0_plan_sf), main = "Museum Floor Plan - Ground Floor", col = "pink")
+```
+
+# PREPROCESSING
+## split trajectories by floor
+```{r}
+#trajectories based on floor
+trajectory_f00 <- geo_trajectories %>% 
+  dplyr::filter(.data$floorNumber == 0)
+trajectory_f01 <- geo_trajectories %>% 
+  dplyr::filter(.data$floorNumber == 1)
+trajectory_f02 <- geo_trajectories %>% 
+  dplyr::filter(.data$floorNumber == 2)
+
+#check how many points per floor
+cat("Floor 0:", nrow(trajectory_f00), "points\n")
+cat("Floor 1:", nrow(trajectory_f01), "points\n")
+cat("Floor 2:", nrow(trajectory_f02), "points\n")
+```
+
+## filter trajectory by room polygons
+```{r}
+# filter out trajectory points that fall outside of the room polygons
+filter_trajectories_by_rooms <- function(trajectory_data, room_polygons) {
+  
+  # find which trajectory points are inside any room polygon
+  points_in_rooms <- st_intersects(trajectory_data, 
+                                   st_union(room_polygons), 
+                                   sparse = FALSE)
+  
+  # filter trajectory data to keep only points inside rooms
+  filtered_trajectories <- trajectory_data[points_in_rooms, ]
+  
+  cat("Original points:", nrow(trajectory_data), "\n")
+  cat("Points inside rooms:", nrow(filtered_trajectories), "\n")
+  cat("Points removed:", nrow(trajectory_data) - nrow(filtered_trajectories), "\n")
+  cat("Retention rate:", 
+      round(100 * nrow(filtered_trajectories) / nrow(trajectory_data), 2), "%\n")
+  
+  return(filtered_trajectories)
+}
+
+trajectory_f0_filtered <- filter_trajectories_by_rooms(trajectory_f00, floor_0_rooms)
+trajectory_f1_filtered <- filter_trajectories_by_rooms(trajectory_f01, floor_1_rooms)
+trajectory_f2_filtered <- filter_trajectories_by_rooms(trajectory_f02, floor_2_rooms)
+```
+
+## trajectory extraction and conversion
+```{r}
+# extract and convert trajectories to LINESTRING per participant per floor
+extract_trajectories_as_lines <- function(trajectory_data, floor_number) {
+  
+  # filter by floor and sort by participant and timestamp
+  floor_data <- trajectory_data %>%
+    filter(floorNumber == floor_number) %>%
+    arrange(id, timestamp)
+  
+  # get unique participant IDs 
+  participant_ids <- unique(floor_data$id)
+  
+  # create linestring for each participant
+  trajectories_list <- vector("list", length = length(participant_ids))
+  names(trajectories_list) <- as.character(participant_ids)  # use actual ids
+  
+  for (i in seq_along(participant_ids)) {
+    pid <- participant_ids[i]
+    
+    # filter to single participant
+    pdata <- floor_data %>% filter(id == pid)
+    
+    # extract coordinates
+    coords <- st_coordinates(pdata$geometry)
+    
+    # create linestring (at least 2 points)
+    if (nrow(coords) >= 2) {
+      trajectories_list[[as.character(pid)]] <- st_linestring(coords)
+    } else {
+      trajectories_list[[as.character(pid)]] <- NULL
+    }
+  }
+  
+  # remove null entries
+  trajectories_list <- trajectories_list[!sapply(trajectories_list, is.null)]
+  
+  return(trajectories_list)
+}
+
+```
+
+# ANALYSIS FUNCTIONS
+## Fréchet distance calculation
+```{r}
+# calculate pairwise Fréchet distance matrix for trajectories
+calculate_frechet_matrix <- function(trajectories) {
+  
+  n <- length(trajectories)
+  traj_names <- names(trajectories)
+  
+  # convert list to sf collection for st_distance
+  traj_sfc <- st_sfc(trajectories)
+  
+  # calculate pairwise distances
+  dist_matrix <- st_distance(traj_sfc, which = "Frechet")
+  
+  # set rownames and colnames from original trajectory names
+  rownames(dist_matrix) <- traj_names
+  colnames(dist_matrix) <- traj_names
+  
+  return(as.matrix(dist_matrix))
+}
+```
+
+## variability metrics
+```{r}
+# calculate trajectory variability metrics per floor
+calculate_variability_metrics <- function(dist_matrix) {
+  
+  # remove diagonal (self-distances = 0)
+  upper_tri <- dist_matrix[upper.tri(dist_matrix)]
+  
+  metrics <- list(
+    mean_distance = mean(upper_tri),
+    median_distance = median(upper_tri),
+    sd_distance = sd(upper_tri),
+    min_distance = min(upper_tri),
+    max_distance = max(upper_tri),
+    cv_distance = sd(upper_tri) / mean(upper_tri),  # coefficient of variation
+    q25 = quantile(upper_tri, 0.25),
+    q75 = quantile(upper_tri, 0.75),
+    iqr = IQR(upper_tri),
+    n_trajectories = nrow(dist_matrix),
+    all_distances = upper_tri
+  )
+  
+  return(metrics)
+}
+
+# calculate distance from mean trajectory (centroid path)
+calculate_distance_from_centroid <- function(trajectories, dist_matrix) {
+  
+  # distance from centroid = mean distance to all other trajectories
+  distance_from_centroid <- rowMeans(dist_matrix)
+  
+  return(distance_from_centroid)
+}
+```
+
+# VISUALISATION FUNCTIONS
+## colour pallett
+```{r}
+palette_loud <- list(
+  floor0 = c(dark = "#92113AFF", base = "#C1395EFF"),
+  floor1 = c(dark = "#DFA90DFF", base = "#FFD84AFF"),
+  floor2 = c(dark = "#5F7F00FF", base = "#AEC17BFF")
+)
+
+# get plot colour helper function
+get_floor_colors <- function(floor_name, palette_loud) {
+  # Handle different floor name formats
+  # "Floor 0" or "floor 0" or "floor_0" -> "floor0"
+  floor_key <- tolower(gsub("\\s+|_", "", floor_name))
+  if (!floor_key %in% names(palette_loud)) {
+    stop(paste("Unknown floor:", floor_name))
+  }
+  palette_loud[[floor_key]]
+}
+
+```
+
+## heatmap of pathway distnaces (similarity)
+```{r}
+# plot frechet distance heatmap with dendrogram
+plot_distance_heatmap <- function(dist_matrix, clusters = NULL, floor_name = "Floor 0", 
+                                  title_prefix = "Fréchet Distance Matrix") {
+  
+  #convert to regular matrix
+  if (inherits(dist_matrix, "dist")) {
+    dist_matrix <- as.matrix(dist_matrix)
+  } else if (inherits(dist_matrix, "units")) {
+    dist_matrix <- as.numeric(dist_matrix)
+  } else {
+    dist_matrix <- as.matrix(dist_matrix)
+  }
+  
+  # ensure col and row names work
+  if (is.null(rownames(dist_matrix))) {
+    rownames(dist_matrix) <- 1:nrow(dist_matrix)
+  }
+  if (is.null(colnames(dist_matrix))) {
+    colnames(dist_matrix) <- 1:ncol(dist_matrix)
+  }
+  
+  # perform clustering if not provided
+  hc <- hclust(as.dist(dist_matrix), method = "ward.D2")
+  order_idx <- hc$order
+  
+  # reorder matrix by clustering
+  dist_ordered <- dist_matrix[order_idx, order_idx]
+  
+  # convert to long format for ggplot
+  heatmap_data <- as.data.frame(dist_ordered) %>%
+    rownames_to_column("Trajectory1") %>%
+    pivot_longer(-Trajectory1, names_to = "Trajectory2", values_to = "Distance") %>%
+    mutate(
+      Distance = as.numeric(Distance),
+      Trajectory1 = factor(Trajectory1, levels = rownames(dist_ordered)),
+      Trajectory2 = factor(Trajectory2, levels = colnames(dist_ordered))
+    )
+  
+  # get floor colors
+  floor_colors <- get_floor_colors(floor_name, palette_loud)
+  
+  # create heatmap
+  p <- ggplot(heatmap_data, aes(x = Trajectory2, y = Trajectory1, fill = Distance)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "white",
+    mid = "grey90",
+    high = unname(floor_colors["base"]),
+    midpoint = median(heatmap_data$Distance, na.rm = TRUE)
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5, size = 7),
+    axis.text.y = element_text(size = 7),
+    axis.title = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+  ) +
+  ggtitle(paste0(title_prefix, " - ", floor_name))
+  
+  return(p)
+}
+```
+
+## trajectory density heatmap (over the floorplan)
+```{r}
+# plot trajectory density heatmap on floor
+plot_trajectory_density <- function(trajectory_data, floor_plan, floor_name = "Floor 0", bins = 30) {
+  
+  # extract coordinates
+  coords <- st_coordinates(st_cast(trajectory_data, "POINT"))
+  
+  # create plot
+  floor_colors <- get_floor_colors(floor_name, palette_loud)
+
+  p <- ggplot() +
+    geom_sf(data = floor_plan, fill = "white", color = "black", size = 0.5) +
+  
+    geom_bin2d(
+      data = as.data.frame(coords),
+      aes(x = X, y = Y),
+      bins = bins,
+      alpha = 0.7
+    ) +
+  
+    scale_fill_gradient(
+      low = "white",
+      high = unname(floor_colors["base"]),
+      name = "Point\nDensity"
+    ) +
+    
+    theme_minimal() +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+      axis.text = element_blank(),
+      axis.ticks = element_blank()
+    ) +
+    labs(title = paste0("Movement Density - ", floor_name))
+    
+  return(p)
+}
+```
+
+## trajectory density scatter plot (over the floorplan)
+```{r}
+plot_trajectory_density_scatter <- function(trajectory_data, floor_plan, 
+                                           floor_name = "Floor 0") {
+  
+  floor_colors <- get_floor_colors(floor_name, palette_loud)
+  
+  # create plot
+  p <- ggplot() +
+    geom_sf(data = floor_plan, fill = "white", color = "black", size = 0.5) +
+    geom_sf(
+      data = trajectory_data,
+      color = unname(floor_colors["base"]),
+      alpha = 0.15,
+      size = 0.8
+    ) +
+    coord_sf(expand = FALSE) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold", margin = margin(b = 10)),
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      axis.title = element_blank(),
+      panel.grid = element_blank(),
+      panel.background = element_blank(),
+      plot.margin = margin(0, 0, 0, 0)
+    ) +
+    labs(title = paste0("Movement Density (Point Scatter) - ", floor_name),
+         caption = "Darker areas = more overlapping points")
+  
+  return(p)
+}
+```
+
+## density distributions
+```{r}
+plot_distance_distributions <- function(metrics_list) {
+  
+  comparison_data <- data.frame(
+    floor = rep(names(metrics_list), 
+                times = sapply(metrics_list, function(x) length(x$all_distances))),
+    distance = unlist(lapply(metrics_list, function(x) x$all_distances))
+  )
+  
+  # Convert floor_0 format to Floor 0 for display
+  comparison_data$floor_display <- sapply(comparison_data$floor, function(f) {
+    paste0("Floor ", substr(f, nchar(f), nchar(f)))
+  })
+  
+  floor_fill_palette <- c(
+    floor_0 = unname(palette_loud$floor0["base"]),
+    floor_1 = unname(palette_loud$floor1["base"]),
+    floor_2 = unname(palette_loud$floor2["base"])
+  )
+  
+  ggplot(comparison_data, aes(x = distance, fill = floor)) +
+    geom_histogram(alpha = 0.5, bins = 30, position = "identity") +
+    geom_density(alpha = 0.3, linewidth = 1) +
+    
+    facet_wrap(~floor_display, ncol = 3) +
+    
+    scale_fill_manual(values = floor_fill_palette) +
+    
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      strip.text = element_text(face = "bold")
+    ) +
+    labs(
+      #title = "Distribution of Trajectory Distances per Floor",
+      x = "Fréchet Distance",
+      y = "Frequency"
+    )
+}
+```
+
+## cv comparison
+```{r}
+plot_cv_comparison <- function(metrics_list) {
+  cvs <- sapply(metrics_list, function(x) x$cv_distance)
+  n_vals <- sapply(metrics_list, function(x) length(x$all_distances))
+  
+  # 95% CI for CV (using delta method)
+  cv_ci_lower <- cvs - 1.96 * cvs / sqrt(2 * n_vals)
+  cv_ci_upper <- cvs + 1.96 * cvs / sqrt(2 * n_vals)
+  
+  cv_df <- data.frame(
+    floor = names(metrics_list),
+    cv = cvs,
+    ci_lower = cv_ci_lower,
+    ci_upper = cv_ci_upper
+  )
+  
+  # Map floor names to palette keys (floor_0 -> floor0, floor_1 -> floor1, etc.)
+  palette_map <- list(
+    floor_0 = palette_loud$floor0["base"],
+    floor_1 = palette_loud$floor1["base"],
+    floor_2 = palette_loud$floor2["base"]
+  )
+  
+  fill_values <- setNames(
+    sapply(cv_df$floor, function(f) unname(palette_map[[f]])),
+    cv_df$floor
+  )
+  
+  ggplot(cv_df, aes(x = floor, y = cv, fill = floor)) +
+    geom_col(alpha = 0.8) +
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+    
+    scale_fill_manual(values = fill_values) +
+    
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+    ) +
+    labs(
+      title = "Coefficient of Variation Across Floors",
+      subtitle = "With 95% confidence intervals",
+      x = "Floor",
+      y = "Coefficient of Variation",
+      caption = "Lower CV = more uniform trajectories"
+    )
+}
+```
+
+## cv bootstrap distributions
+```{r}
+plot_cv_bootstrap_distributions <- function(metrics_list) {
+  floor_names <- names(metrics_list)
+  distances_list <- lapply(metrics_list, function(x) x$all_distances)
+  
+  set.seed(42)
+  n_boots <- 5000
+  boot_data <- data.frame()
+  
+  for (i in 1:(length(floor_names) - 1)) {
+    for (j in (i + 1):length(floor_names)) {
+      d1 <- distances_list[[i]]
+      d2 <- distances_list[[j]]
+      
+      cv_diffs <- numeric(n_boots)
+      for (b in 1:n_boots) {
+        d1_boot <- sample(d1, replace = TRUE)
+        d2_boot <- sample(d2, replace = TRUE)
+        
+        cv1_boot <- sd(d1_boot) / mean(d1_boot)
+        cv2_boot <- sd(d2_boot) / mean(d2_boot)
+        
+        cv_diffs[b] <- cv1_boot - cv2_boot
+      }
+      
+      # Convert floor_0 format to Floor 0 for display
+      floor_i_display <- paste0("Floor ", substr(floor_names[i], nchar(floor_names[i]), nchar(floor_names[i])))
+      floor_j_display <- paste0("Floor ", substr(floor_names[j], nchar(floor_names[j]), nchar(floor_names[j])))
+      comparison_label <- paste0(floor_i_display, " vs ", floor_j_display)
+      
+      boot_data <- rbind(boot_data, data.frame(
+        comparison = comparison_label,
+        cv_diff = cv_diffs
+      ))
+    }
+  }
+  
+  # Create palette with matching comparison labels
+  palette_loud <- list(
+    floor0 = c(dark = "#92113AFF", base = "#C1395EFF"),
+    floor1 = c(dark = "#DFA90DFF", base = "#FFD84AFF"),
+    floor2 = c(dark = "#5F7F00FF", base = "#AEC17BFF")
+  )
+  
+  boot_palette <- c(
+    "Floor 0 vs Floor 1" = unname(palette_loud$floor0["base"]),
+    "Floor 0 vs Floor 2" = unname(palette_loud$floor0["base"]),
+    "Floor 1 vs Floor 2" = unname(palette_loud$floor1["base"])
+  )
+  
+  ggplot(boot_data, aes(x = cv_diff, fill = comparison)) +
+    geom_density(alpha = 0.6) +
+    geom_vline(xintercept = 0, linetype = "dashed", size = 1, color = "red") +
+    facet_wrap(~comparison) +
+    scale_fill_manual(values = boot_palette) +
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")
+    ) +
+    labs(
+      title = "Bootstrap Distribution of CV Differences",
+      x = "CV Difference",
+      y = "Density",
+      caption = "Red line = null hypothesis (no difference)"
+    )
+}
+```
+
+# STATISTICAL TESTING - CV COMPARISON
+Bootstrap method for comparison of coefficients of variability.
+```{r}
+compare_cv_statistically <- function(metrics_list) {
+  
+  floor_names <- names(metrics_list)
+  n_floors <- length(metrics_list)
+  cvs <- sapply(metrics_list, function(x) x$cv_distance)
+  
+  cat("=== COEFFICIENT OF VARIATION COMPARISON ===\n\n")
+  
+  cv_summary <- data.frame(
+    floor = floor_names,
+    cv = round(cvs, 4),
+    n_comparisons = sapply(metrics_list, function(x) length(x$all_distances))
+  )
+  print(cv_summary)
+  
+  # bootstrap test
+  cat("\n=== BOOTSTRAP TEST (non-parametric) ===\n")
+  cat("Resamples data to test if CV differences are significant\n\n")
+  
+  distances_list <- lapply(metrics_list, function(x) x$all_distances)
+  set.seed(42)
+  n_boots <- 10000
+  boot_results <- list()
+  
+  for (i in 1:(n_floors - 1)) {
+    for (j in (i + 1):n_floors) {
+      test_name <- paste0(floor_names[i], "_vs_", floor_names[j])
+      
+      d1 <- distances_list[[i]]
+      d2 <- distances_list[[j]]
+      cv_diff_obs <- cvs[i] - cvs[j]
+      
+      # bootstrap
+      cv_diffs <- numeric(n_boots)
+      for (b in 1:n_boots) {
+        d1_boot <- sample(d1, replace = TRUE)
+        d2_boot <- sample(d2, replace = TRUE)
+        
+        cv1_boot <- sd(d1_boot) / mean(d1_boot)
+        cv2_boot <- sd(d2_boot) / mean(d2_boot)
+        
+        cv_diffs[b] <- cv1_boot - cv2_boot
+      }
+      
+      # two-tailed p-value
+      p_value_boot <- mean(abs(cv_diffs) >= abs(cv_diff_obs))
+      
+      # 95% CI
+      ci_lower <- quantile(cv_diffs, 0.025)
+      ci_upper <- quantile(cv_diffs, 0.975)
+      
+      boot_results[[test_name]] <- list(
+        cv_diff_observed = cv_diff_obs,
+        p_value = p_value_boot,
+        ci_lower = ci_lower,
+        ci_upper = ci_upper
+      )
+      
+      cat(test_name, "\n")
+      cat("  CV difference:", round(cv_diff_obs, 4), "\n")
+      cat("  Bootstrap p-value:", round(p_value_boot, 4), 
+          ifelse(p_value_boot < 0.001, "***", 
+                 ifelse(p_value_boot < 0.01, "**", 
+                        ifelse(p_value_boot < 0.05, "*", "ns"))), "\n")
+      cat("  95% CI:", round(ci_lower, 4), "to", round(ci_upper, 4), "\n\n")
+    }
+  }
+  
+  result <- list(
+    cv_summary = cv_summary,
+    bootstrap_tests = boot_results
+  )
+  
+  return(result)
+}
+```
+
+# MAIN ANALYSIS PIPELINE
+```{r}
+# extract trajectories per floor as linestrings
+trajectories_floor_0 <- extract_trajectories_as_lines(trajectory_f0_filtered, floor_number = 0)
+trajectories_floor_1 <- extract_trajectories_as_lines(trajectory_f1_filtered, floor_number = 1)
+trajectories_floor_2 <- extract_trajectories_as_lines(trajectory_f2_filtered, floor_number = 2)
+
+# calculate frechet distance matrices
+dist_matrix_f0 <- calculate_frechet_matrix(trajectories_floor_0)
+dist_matrix_f1 <- calculate_frechet_matrix(trajectories_floor_1)
+dist_matrix_f2 <- calculate_frechet_matrix(trajectories_floor_2)
+
+# calculate variability metrics
+metrics_f0 <- calculate_variability_metrics(dist_matrix_f0)
+metrics_f1 <- calculate_variability_metrics(dist_matrix_f1)
+metrics_f2 <- calculate_variability_metrics(dist_matrix_f2)
+
+metrics_list <- list(floor_0 = metrics_f0, floor_1 = metrics_f1, floor_2 = metrics_f2)
+```
+
+# RESULTS: Statistical testing
+```{r}
+cv_stats <- compare_cv_statistically(metrics_list)
+
+# Save the results
+write.csv(cv_stats$cv_summary, "output/cv_summary.csv", row.names = FALSE)
+saveRDS(cv_stats, "output/cv_stats.rds")
+```
+
+# RESULTS - VISUALISATION
+```{r}
+# trajectory similarity
+p_heatmap_f0 <- plot_distance_heatmap(dist_matrix_f0, floor_name = "Floor 0")
+p_heatmap_f1 <- plot_distance_heatmap(dist_matrix_f1, floor_name = "Floor 1")
+p_heatmap_f2 <- plot_distance_heatmap(dist_matrix_f2, floor_name = "Floor 2")
+
+# trajectory density
+p_density_f0 <- plot_trajectory_density(trajectory_f0_filtered, floor_0_plan_sf, "Floor 0")
+p_density_f1 <- plot_trajectory_density(trajectory_f1_filtered, floor_1_plan_sf, "Floor 1")
+p_density_f2 <- plot_trajectory_density(trajectory_f2_filtered, floor_2_plan_sf, "Floor 2")
+
+# trajectory density (scatterplot)
+p_density_scatter_f0 <- plot_trajectory_density_scatter(trajectory_f0_filtered, floor_0_plan_sf, "Floor 0")
+p_density_scatter_f1 <- plot_trajectory_density_scatter(trajectory_f1_filtered, floor_1_plan_sf, "Floor 1")
+p_density_scatter_f2 <- plot_trajectory_density_scatter(trajectory_f2_filtered, floor_2_plan_sf, "Floor 2")
+
+# distance distirbution
+p_distributions <- plot_distance_distributions(metrics_list)
+
+# cv comparison
+p_cv <- plot_cv_comparison(metrics_list)
+p_cv_boot <- plot_cv_bootstrap_distributions(metrics_list)
+
+# combined scatter density plot
+combined_plot <- (p_density_scatter_f0 | p_density_scatter_f1 | p_density_scatter_f2) +
+  plot_layout(
+    ncol = 3,
+    widths = c(1, 1, 1)
+  ) +
+  plot_annotation(
+    title = "Movement Density (Point Scatter)",
+    theme = theme(
+      plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+      plot.margin = margin(0, 0, 10, 0)
+    )
+  ) &
+  theme(
+    plot.margin = margin(0, 2, 0, 2)
+  )
+
+combined_plot
+
+combined_plot
+
+combined_plot
+

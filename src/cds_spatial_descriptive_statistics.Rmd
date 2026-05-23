@@ -1,0 +1,121 @@
+---
+title: "Spatial Analytics Exam"
+author: "Alexandra Ciulisová and Zofia Radwańska"
+date: "2026-05-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#loading in the packages
+```{r}
+library(pacman)
+pacman::p_load(tidyverse,
+               readr,
+               dplyr,
+               ggplot
+               
+               )
+```
+
+#loading in the data
+```{r}
+file_path <- list.files(path = "../data/normalised_trajectories", full.names = TRUE) 
+
+semantic_info <- read.csv("../data/semantic_info_entire_trajectories.csv")
+
+demographic_data <- read.csv("../data/questionnaires/pre_questionnaire_formatted.csv")
+
+#extract participant id
+trajectory_normalised <- file_path %>%
+  set_names() %>%
+  map_df(~read_csv(.x, col_types = cols()), .id = "file_path") %>%
+  # 3. Extract the last 12 digits from the path string
+  mutate(participant_id = str_extract(file_path, "\\d{12}(?=\\.csv)")) %>%
+  # Optional: remove the temporary path column
+  select(-file_path)
+```
+
+#demographic statistics
+```{r}
+#116 participants in total (pre questionaire) but only 51 collected trajectories
+demo_data_filtered <- filter(demographic_data, visitor_id %in% semantic_info$trajectory_id)
+
+age_distribution <- demo_data_filtered %>% 
+  summarise(mean = mean(age), median = median(age), sd = sd(age))
+
+gender_distribution <- demo_data_filtered %>% 
+  group_by(gender) %>% 
+  summarise(count = n())
+
+nationality_distribution <- demo_data_filtered %>% 
+  group_by(nationality) %>% 
+  summarise(count = n())
+
+education <- demo_data_filtered %>% 
+  group_by(diploma) %>% 
+  summarise(count = n())
+
+motivation <- demo_data_filtered %>%
+  select(starts_with("motiv_")) %>%
+  summarise(across(everything(), ~ sum(.x == 1, na.rm = TRUE)))
+
+goal <- demo_data_filtered %>%
+  select(starts_with("visitGoal")) %>%
+  summarise(across(everything(), ~ sum(.x == 1, na.rm = TRUE)))
+
+
+```
+
+#semantic info
+```{r}
+duration <- semantic_info %>% 
+  summarise(mean = mean(duration), median = median(duration), sd = sd(duration))
+
+distance <- semantic_info %>% 
+  summarise(mean = mean(length), median = median(length), sd = sd(length))
+
+items_seen <- semantic_info %>% 
+  summarise(mean = mean(nb_items), median = median(nb_items), sd = sd(nb_items))
+```
+
+# save all of the outputs
+```{r}
+# collect all summary outputs in one named list
+summary_outputs <- list(
+  age_distribution = age_distribution,
+  gender_distribution = gender_distribution,
+  nationality_distribution = nationality_distribution,
+  education = education,
+  motivation = motivation,
+  goal = goal,
+  duration = duration,
+  distance = distance,
+  items_seen = items_seen
+)
+
+# inspecting
+summary_outputs
+
+# create a long output
+summary_outputs_long <- imap_dfr(
+  summary_outputs,
+  ~ .x %>%
+    mutate(across(everything(), as.character)) %>%
+    pivot_longer(
+      cols = everything(),
+      names_to = "variable",
+      values_to = "value"
+    ) %>%
+    mutate(summary_table = .y, .before = 1)
+)
+
+# export
+write_csv(
+  summary_outputs_long,
+  "../out/tables/descriptive_summary_outputs_long.csv"
+)
+```
+

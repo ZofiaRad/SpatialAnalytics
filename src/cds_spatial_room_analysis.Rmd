@@ -32,7 +32,7 @@ drop_crs <- function(x) {
 }
 
 # loading trajectory data and drop CRS
-geo_trajectories <- st_read("../data/all_trajectories_with_floor.geojson")
+geo_trajectories <- st_read("../data/geojson_converted_objects/all_trajectories_with_floor.geojson")
 geo_trajectories$floorNumber <- as.integer(geo_trajectories$floorNumber)
 geo_trajectories <- drop_crs(geo_trajectories)
 
