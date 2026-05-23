@@ -556,7 +556,7 @@ mean_time_correlations <- map_dfr(vars_to_correlate, function(var) {
 mean_time_correlations
 
 # export to csv
-write_csv(mean_time_correlations, "../out/mean_room_visit_time_correlations.csv")
+write_csv(mean_time_correlations, "../out/tables/mean_room_visit_time_correlations.csv")
 ```
 
 # Floor plan
@@ -913,7 +913,7 @@ floor_route_structure <- branching_points %>%
 floor_route_structure
 
 # export the floor_route_structure to csv
-write_csv(floor_route_structure, "../out/floor_route_exploration_rate.csv")
+write_csv(floor_route_structure, "../out/tables/floor_route_exploration_rate.csv")
 
 #high mean_dominant_share	floor produces similar routes
 #high mean_transition_entropy	floor allows diverse exploration
