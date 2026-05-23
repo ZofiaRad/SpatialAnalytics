@@ -6,8 +6,6 @@ output: html_document
 # Libraries
 ```{r}
 # loading libraries
-install.packages("rjson")
-install.packages("jsonlite")
 library(tidyverse)
 library(rjson)
 library(jsonlite)
@@ -20,6 +18,8 @@ library(tidyr)
 library(scales)
 library(grid)
 library(tibble)
+library(shadowtext)
+library(patchwork)
 ```
 
 # Reading data
@@ -52,12 +52,20 @@ floor_0_rooms <- drop_crs(floor_0_rooms)
 floor_1_rooms <- drop_crs(floor_1_rooms)
 floor_2_rooms <- drop_crs(floor_2_rooms)
 
+#add room area
+floor_0_rooms <- floor_0_rooms %>% 
+  mutate(room_area = as.numeric(st_area(geometry)) / 10000) # in m2
+floor_1_rooms <- floor_1_rooms %>% 
+  mutate(room_area = as.numeric(st_area(geometry)) / 10000)
+floor_2_rooms <- floor_2_rooms %>% 
+  mutate(room_area = as.numeric(st_area(geometry)) / 10000)
+
 #renaming columns
-floor_0_rooms <- floor_0_rooms %>% select(room_id, geometry)
+floor_0_rooms <- floor_0_rooms %>% select(room_id, geometry, room_area)
 floor_1_rooms <- floor_1_rooms %>% mutate(room_id = floor_plan)
-floor_1_rooms <- floor_1_rooms %>% select(room_id, geometry)
+floor_1_rooms <- floor_1_rooms %>% select(room_id, geometry, room_area)
 floor_2_rooms <- floor_2_rooms %>% mutate(room_id = fid)
-floor_2_rooms <- floor_2_rooms %>% select(room_id, geometry)
+floor_2_rooms <- floor_2_rooms %>% select(room_id, geometry, room_area)
 
 #trajectories based on floor
 trajectory_f00 <- geo_trajectories %>% 
@@ -66,6 +74,16 @@ trajectory_f01 <- geo_trajectories %>%
   dplyr::filter(.data$floorNumber == 1)
 trajectory_f02 <- geo_trajectories %>% 
   dplyr::filter(.data$floorNumber == 2)
+
+#read artworks data
+artworks <- read_csv("data/museum_walls_plans/artworks_dataset.csv") %>%
+  select(image_id, floor, room_id, painting_name, artist, Type) %>%
+  mutate(
+    floorNumber = as.integer(floor),
+    room_id = as.character(str_replace(room_id, "Room_", "")),
+    type = as.character(Type)
+  ) %>%
+  select(painting_name, floorNumber, room_id, type, artist)
 ```
 
 # Room and trajectories combine
@@ -73,21 +91,21 @@ trajectory_f02 <- geo_trajectories %>%
 #combine trajectories with rooms for each floor
 trajectory_f00_rooms <- st_join(
   trajectory_f00,
-  floor_0_rooms %>% select(room_id),
+  floor_0_rooms %>% select(room_id, room_area),
   join = st_covered_by,
   left = TRUE
 )
 
 trajectory_f01_rooms <- st_join(
   trajectory_f01,
-  floor_1_rooms %>% select(room_id),
+  floor_1_rooms %>% select(room_id, room_area),
   join = st_covered_by,
   left = TRUE
 )
 
 trajectory_f02_rooms <- st_join(
   trajectory_f02,
-  floor_2_rooms %>% select(room_id),
+  floor_2_rooms %>% select(room_id, room_area),
   join = st_covered_by,
   left = TRUE
 )
@@ -127,7 +145,7 @@ room_episodes <- trajectories_with_rooms %>%
     room_change = room_id != lag(room_id, default = first(room_id)),
     episode_id = cumsum(room_change)
   ) %>%
-  group_by(id, episode_id, floorNumber, room_id) %>%
+  group_by(id, episode_id, floorNumber, room_id, room_area) %>%
   summarise(
     entry_time = min(timestamp),
     exit_time = max(timestamp),
@@ -164,12 +182,13 @@ rooms_all <- bind_rows(
 ) %>%
   mutate(
     floorNumber = as.integer(floorNumber),
-    room_id = as.character(room_id)
+    room_id = as.character(room_id),
+    room_area = as.numeric(room_area)
   ) %>%
   st_make_valid()
 
 room_nodes_sf <- rooms_all %>%
-  mutate(geometry = st_point_on_surface(geometry))
+  mutate(geometry = st_centroid(geometry))
 
 coords <- st_coordinates(room_nodes_sf)
 
@@ -179,7 +198,8 @@ room_nodes <- room_nodes_sf %>%
     y = coords[, 2]
   ) %>%
   st_drop_geometry() %>%
-  select(floorNumber, room_id, x, y)
+  select(floorNumber, room_id, x, y, room_area)
+
 ```
 
 ```{r}
@@ -315,7 +335,8 @@ node_time <- room_episodes %>%
     unique_visitors = n_distinct(id),
     n_visits = n(),
     mean_duration_sec = mean(duration_sec, na.rm = TRUE),
-    .groups = "drop"
+    .groups = "drop",
+    normalised_time_by_area = total_time_sec / unique(room_area)
   )
 
 node_transition_importance <- bind_rows(
@@ -375,6 +396,7 @@ nodes <- room_nodes %>%
   ungroup()
 ```
 
+
 ```{r}
 # ---------- helper for adding edge coordinates ----------
 add_edge_coords <- function(edges, from_col, to_col, nodes) {
@@ -422,6 +444,92 @@ edges_undirected_xy_valid <- edges_undirected_valid %>%
   )
 ```
 
+```{r}
+n_nextrooms <- edges_directed_valid %>%
+  group_by(floorNumber, from_room) %>%
+  summarise(
+    n_next_rooms = n_distinct(to_room))
+```
+
+# Influencing factors for time spent in a room
+```{r}
+# add artworks counts to nodes 
+artworks_count <- artworks %>%
+  group_by(floorNumber, room_id) %>%
+  summarise(
+    n_artworks = n(),
+    .groups = "drop"
+  )
+
+nodes <- nodes %>%
+  left_join(
+    artworks_count,
+    by = c("floorNumber", "room_id")
+  ) %>%
+  mutate(
+    n_artworks = replace_na(n_artworks, 0)
+  )
+
+# add next room counts to nodes 
+n_nextrooms <- edges_directed_valid %>%
+  group_by(floorNumber, from_room) %>%
+  summarise(
+    n_next_rooms = n_distinct(to_room),
+    .groups = "drop"
+  ) %>%
+  mutate(room_id = from_room)
+
+nodes <- nodes %>%
+  left_join(
+    n_nextrooms,
+    by = c("floorNumber", "room_id")) %>%
+   mutate(
+    n_next_rooms = replace_na(n_next_rooms, 0)
+  )
+
+# correlating
+vars_to_correlate <- nodes %>%
+  select(
+    room_area,
+    unique_visitors,
+    in_transitions,
+    n_artworks,
+    n_next_rooms
+  ) %>%
+  names()
+
+mean_time_correlations <- map_dfr(vars_to_correlate, function(var) {
+  
+  tmp <- nodes %>%
+    select(mean_duration_sec, all_of(var)) %>%
+    filter(
+      !is.na(mean_duration_sec),
+      !is.na(.data[[var]])
+    )
+  
+  test <- cor.test(
+    tmp$mean_duration_sec,
+    tmp[[var]],
+    method = "spearman",
+    exact = FALSE
+  )
+  
+  tibble(
+    variable = var,
+    n = nrow(tmp),
+    spearman_rho = unname(test$estimate),
+    p_value = test$p.value
+  )
+}) %>%
+  arrange(desc(abs(spearman_rho)))
+
+mean_time_correlations
+
+# export to csv
+write_csv(mean_time_correlations, "out/mean_room_visit_time_correlations.csv")
+
+```
+
 
 ```{r}
 # overview of floor plans for visualization, we create a list of the floor plan spatial data frames for each floor, which allows us to easily access and plot the floor plans in our network visualizations. This is important for providing context to the room transition networks and understanding how the rooms are arranged within the building.
@@ -434,15 +542,31 @@ floor_plans <- list(
 
 ```{r}
 # plotting function
+palette_loud <- list(
+  floor0 = c(
+    dark = "#92113AFF",
+    base = "#D94B79FF"
+  ),
+  floor1 = c(
+    dark = "#DFA90DFF",
+    base = "#FFE66AFF"
+  ),
+  floor2 = c(
+    dark = "#5F7F00FF",
+    base = "#AEC17BFF"
+  )
+)
+
 plot_room_network <- function(
     floor_no,
     directed = FALSE,
-    node_metric = "importance_score",
-    top_edges = 15,
-    label_top_n = 8
+    node_metric = "normalised_time_by_area",
+    top_edges_pct = 100
 ) {
   
   floor_no <- as.integer(floor_no)
+  
+  pal <- palette_loud[[paste0("floor", floor_no)]]
   
   plan_floor <- floor_plans[[as.character(floor_no)]]
   
@@ -453,76 +577,53 @@ plot_room_network <- function(
     filter(floorNumber == floor_no)
   
   label_nodes <- nodes_floor %>%
-    arrange(desc(.data[[node_metric]])) %>%
-    slice_head(n = label_top_n)
+    arrange(desc(.data[[node_metric]]))
+  
+  top_edges_prop <- top_edges_pct / 100
+  
+  if (top_edges_prop <= 0 || top_edges_prop > 1) {
+    stop("top_edges_pct must be between 1 and 100.")
+  }
+  
+  if (directed) {
+    edges_floor <- edges_directed_xy_valid %>%
+      filter(floorNumber == floor_no) %>%
+      arrange(desc(transition_count))
+    
+    edge_limits <- range(edges_directed_xy_valid$transition_count, na.rm = TRUE)
+    
+  } else {
+    edges_floor <- edges_undirected_xy_valid %>%
+      filter(floorNumber == floor_no) %>%
+      arrange(desc(transition_count))
+    
+    edge_limits <- range(edges_undirected_xy_valid$transition_count, na.rm = TRUE)
+  }
+  
+  n_edges_keep <- ceiling(nrow(edges_floor) * top_edges_prop)
+  
+  edges_floor <- edges_floor %>%
+    slice_head(n = n_edges_keep)
+  
+  node_limits <- range(nodes_floor[[node_metric]], na.rm = TRUE)
   
   p <- ggplot() +
     geom_sf(
       data = plan_floor,
       fill = NA,
       colour = "grey80",
-      linewidth = 0.3
+      linewidth = 0.3,
+      show.legend = FALSE
     ) +
     geom_sf(
       data = rooms_floor,
       fill = NA,
       colour = "grey55",
-      linewidth = 0.4
+      linewidth = 0.4,
+      show.legend = FALSE
     )
   
   if (directed) {
-  
-  node_buffer <- 0.1  # increase if arrows still enter nodes, decrease if too far away
-  
-  edges_floor <- edges_directed_xy_valid %>%
-    filter(floorNumber == floor_no) %>%
-    arrange(desc(transition_count)) %>%
-    slice_head(n = top_edges) %>%
-    mutate(
-      dx = x_to - x_from,
-      dy = y_to - y_from,
-      edge_len = sqrt(dx^2 + dy^2)
-    ) %>%
-    filter(edge_len > 0) %>%
-    mutate(
-      # start slightly after source node
-      x_from_plot = x_from + node_buffer * dx / edge_len,
-      y_from_plot = y_from + node_buffer * dy / edge_len,
-      
-      # end slightly before target node
-      x_to_plot = x_to - node_buffer * dx / edge_len,
-      y_to_plot = y_to - node_buffer * dy / edge_len
-    )
-  
-  p <- p +
-    geom_curve(
-      data = edges_floor,
-      aes(
-        x = x_from_plot,
-        y = y_from_plot,
-        xend = x_to_plot,
-        yend = y_to_plot,
-        colour = transition_count
-      ),
-      linewidth = 0.6,
-      curvature = 0.15,
-      alpha = 0.85,
-      lineend = "round",
-      arrow = arrow(
-        length = unit(0.16, "inches"),
-        type = "closed"
-      )
-    ) +
-    scale_colour_gradient(
-      low = "lightblue",
-      high = "darkblue",
-      name = "Transitions"
-      )
-}
-   else {
-    
-    edges_floor <- edges_undirected_xy_valid %>%
-      filter(floorNumber == floor_no)
     
     p <- p +
       geom_segment(
@@ -534,7 +635,30 @@ plot_room_network <- function(
           yend = y_to,
           linewidth = transition_count
         ),
-        alpha = 0.55
+        colour = "grey30",
+        alpha = 0.7,
+        lineend = "round",
+        arrow = arrow(
+          length = unit(0.05, "inches"),
+          type = "closed"
+        )
+      )
+    
+  } else {
+    
+    p <- p +
+      geom_segment(
+        data = edges_floor,
+        aes(
+          x = x_from,
+          y = y_from,
+          xend = x_to,
+          yend = y_to,
+          linewidth = transition_count
+        ),
+        colour = "grey30",
+        alpha = 0.55,
+        lineend = "round"
       )
   }
   
@@ -545,77 +669,146 @@ plot_room_network <- function(
         x = x,
         y = y,
         size = .data[[node_metric]],
-        color = .data[[node_metric]]
+        fill = .data[[node_metric]]
       ),
-      alpha = 0.8
+      shape = 21,
+      colour = "white",
+      stroke = 0.25,
+      alpha = 0.9
     ) +
-    geom_text(
+    geom_shadowtext(
       data = label_nodes,
-      aes(
-        x = x,
-        y = y,
-        label = room_id
-      ),
+      aes(x = x, y = y, label = room_id),
+      color = "#111111FF",
+      bg.color = "#FFFFFFFF",
+      bg.r = 0.12,
       size = 3,
-      vjust = -1
+      fontface = "bold",
+      show.legend = FALSE
     ) +
-    scale_size_continuous(range = c(2, 11)) +
-    scale_linewidth_continuous(range = c(0.2, 2.5)) +
+    scale_fill_gradient(
+      name = "Rooms: normalised time spent",
+      low = pal["base"],
+      high = pal["dark"],
+      limits = node_limits,
+      guide = guide_colourbar(
+        order = 1,
+        title.position = "top"
+      )
+    ) +
+    scale_size_continuous(
+      name = "Rooms: normalised time spent",
+      range = c(2, 11),
+      limits = node_limits,
+      guide = guide_legend(
+        order = 2,
+        title.position = "top",
+        override.aes = list(
+          fill = "grey60",
+          colour = "white",
+          alpha = 0.9
+        )
+      )
+    ) +
+    scale_linewidth_continuous(
+      name = "Edges: number of transitions",
+      range = c(0.2, 2.5),
+      limits = edge_limits,
+      guide = guide_legend(
+        order = 3,
+        title.position = "top",
+        override.aes = list(
+          colour = "grey30",
+          alpha = 0.7
+        )
+      )
+    ) +
     coord_sf() +
     theme_void() +
     labs(
-      title = paste0(
-        "Room transition network, floor ",
+      title = paste0("Floor ",
         floor_no,
-        ifelse(directed, " directed", " undirected")
-      ),
-      size = node_metric,
-      linewidth = "Transition count"
+        ": Room transition network"
+      )
+    ) +
+    theme(
+      legend.position = "right",
+      legend.box = "vertical",
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(size = 9),
+      legend.spacing.y = unit(0.35, "cm")
     )
 }
 ```
 
 ```{r}
-plot_room_network(
+floor0_plot <- plot_room_network(
   floor_no = 0,
   directed = FALSE,
-  node_metric = "importance_score"
+  node_metric = "normalised_time_by_area"
 )
 
-plot_room_network(
+floor1_plot <- plot_room_network(
   floor_no = 1,
   directed = FALSE,
-  node_metric = "importance_score"
+  node_metric = "normalised_time_by_area"
 )
 
-plot_room_network(
+floor2_plot <- plot_room_network(
   floor_no = 2,
   directed = FALSE,
-  node_metric = "importance_score"
+  node_metric = "normalised_time_by_area"
+)
+
+# combine the three plots and facet wrap them
+combined_plot <- (floor0_plot / floor1_plot / floor2_plot) +
+  plot_layout(
+    ncol = 1,
+    heights = c(1, 1, 1)
+  ) +
+  plot_annotation(
+    title = "Room transition networks for each floor",
+    theme = theme(
+      plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+      plot.margin = margin(10, 10, 10, 10)
+    )
+  ) &
+  theme(
+    plot.margin = margin(10, 10, 10, 10),
+    legend.position = "right"
+  )
+
+combined_plot
+
+# export combined_plot to file
+ggsave(
+  filename = "out/figures/room_transition_networks_combined.png",
+  plot = combined_plot,
+  width = 10,
+  height = 15,
+  dpi = 300
 )
 ```
 
-```{r}
-plot_room_network(
-  floor_no = 0,
-  directed = TRUE,
-  node_metric = "importance_score",
-  top_edges = 15
-)
-
-plot_room_network(
-  floor_no = 1,
-  directed = TRUE,
-  node_metric = "importance_score",
-  top_edges = 15
-)
-
-plot_room_network(
-  floor_no = 2,
-  directed = TRUE,
-  node_metric = "importance_score",
-  top_edges = 15
-)
+ ```{r}
+# not looking into directed networks
+# plot_room_network(
+#   floor_no = 0,
+#   directed = TRUE,
+#   node_metric = "normalised_time_by_area"
+# )
+# 
+# plot_room_network(
+#   floor_no = 1,
+#   directed = TRUE,
+#   node_metric = "normalised_time_by_area"
+# )
+# 
+# plot_room_network(
+#   floor_no = 2,
+#   directed = TRUE,
+#   node_metric = "normalised_time_by_area"
+# )
 ```
 
 
@@ -680,6 +873,9 @@ floor_route_structure <- branching_points %>%
   )
 
 floor_route_structure
+
+# export the floor_route_structure to csv
+write_csv(floor_route_structure, "out/floor_route_exploration_rate.csv")
 
 #high mean_dominant_share	floor produces similar routes
 #high mean_transition_entropy	floor allows diverse exploration
