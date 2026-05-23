@@ -637,6 +637,10 @@ metrics_list <- list(floor_0 = metrics_f0, floor_1 = metrics_f1, floor_2 = metri
 # RESULTS: Statistical testing
 ```{r}
 cv_stats <- compare_cv_statistically(metrics_list)
+
+# Save the results
+write.csv(cv_stats$cv_summary, "output/cv_summary.csv", row.names = FALSE)
+saveRDS(cv_stats, "output/cv_stats.rds")
 ```
 
 # RESULTS - VISUALISATION
