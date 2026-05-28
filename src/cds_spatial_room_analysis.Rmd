@@ -896,6 +896,43 @@ branching_points
 #high transition_entropy = visitors split into different routes
 #high n_next_rooms = room functions as a branching point
 ```
+```{r}
+# visualize the branching points - dominant_share and transition_entropy
+branching_points_room <- ggplot(branching_points, aes(x = dominant_share, y = transition_entropy)) +
+  geom_point(aes(size = n_next_rooms, color = as.factor(floorNumber)), alpha = 0.7) +
+  scale_color_manual(
+    name = "Floor",
+    values = c(
+      "0" = palette_loud$floor0[["dark"]],
+      "1" = palette_loud$floor1[["dark"]],
+      "2" = palette_loud$floor2[["dark"]]
+    ),
+    labels = c("Floor 0", "Floor 1", "Floor 2")
+  ) +
+  scale_size_continuous(name = "Number of next rooms") +
+  labs(
+    title = "Branching structure of visitor routes from each room",
+    x = "Dominant next room share",
+    y = "Transition entropy"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(size = 9)
+  )
+
+branching_points_room
+
+ggsave(
+  filename = "../out/figures/branching_structure_per_room_plot.png",
+  plot = branching_points_room,
+  width = 10,
+  height = 8,
+  dpi = 300
+)
+```
+
 
 # Inspecting how the branching structure of the routes is affected by the floor layout
 ```{r}
@@ -1200,3 +1237,46 @@ route_conformity <- visitor_transitions_valid %>%
 # inspecting
 route_conformity 
 ```
+
+```{r}
+# visualize route_conformity for each floor over all participants
+room_conformity_plot <- ggplot(route_conformity, aes(x = factor(floorNumber), y = route_conformity)) +
+  geom_boxplot(fill = "lightblue", color = "darkblue") +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  labs(
+    title = "Distribution of Route Conformity by Floor",
+    x = "Floor Number",
+    y = "Route Conformity (Mean Share of Dominant Next Room)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  )
+
+room_conformity_plot
+
+# save the plot
+ggsave(
+  filename = "../out/figures/room_conformity_plot.png",
+  plot = room_conformity_plot,
+  width = 10,
+  height = 8,
+  dpi = 300
+)
+
+room_transitions_plot <- ggplot(route_conformity, aes(x = factor(floorNumber), y = n_valid_transitions)) +
+  geom_boxplot(fill = "lightblue", color = "darkblue") +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  labs(
+    title = "Distribution of Room Transitions by Floor",
+    x = "Floor Number",
+    y = "Route Transitions"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5)
+  )
+
+room_transitions_plot
+```
+
