@@ -1239,6 +1239,19 @@ route_conformity
 ```
 
 ```{r}
+# calculating route conformity by floor
+route_conformity %>%
+  group_by(floorNumber) %>%
+  summarise(
+    mean_conformity = mean(route_conformity, na.rm = TRUE),
+    median_conformity = median(route_conformity, na.rm = TRUE),
+    n_visitors = n(),
+    .groups = "drop"
+  )
+```
+
+
+```{r}
 # visualize route_conformity for each floor over all participants
 room_conformity_plot <- ggplot(route_conformity, aes(x = factor(floorNumber), y = route_conformity)) +
   geom_boxplot(fill = "lightblue", color = "darkblue") +
