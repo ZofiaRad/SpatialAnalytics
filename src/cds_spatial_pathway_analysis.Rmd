@@ -36,23 +36,23 @@ drop_crs <- function(x) {
 # LOADING DATA
 ```{r}
 # loading trajectory data and drop CRS
-geo_trajectories <- st_read("data/all_trajectories_with_floor.geojson")
+geo_trajectories <- st_read("../data/geojson_converted_objects/all_trajectories_with_floor.geojson")
 geo_trajectories$floorNumber <- as.integer(geo_trajectories$floorNumber)
 geo_trajectories <- drop_crs(geo_trajectories)
 
 
 #floor plan + drop crs
-floor_0_plan_sf <- st_read("data/geojson_converted_objects/floor_0_all_objects.geojson")
-floor_1_plan_sf <- st_read("data/geojson_converted_objects/floor_1_all_objects.geojson")
-floor_2_plan_sf <- st_read("data/geojson_converted_objects/floor_2_all_objects.geojson")
+floor_0_plan_sf <- st_read("../data/geojson_converted_objects/floor_0_all_objects.geojson")
+floor_1_plan_sf <- st_read("../data/geojson_converted_objects/floor_1_all_objects.geojson")
+floor_2_plan_sf <- st_read("../data/geojson_converted_objects/floor_2_all_objects.geojson")
 floor_0_plan_sf <- drop_crs(floor_0_plan_sf)
 floor_1_plan_sf <- drop_crs(floor_1_plan_sf)
 floor_2_plan_sf <- drop_crs(floor_2_plan_sf)
 
 #room plan - polygons and drop CRS
-floor_0_rooms <- st_read("data/polygons/polygons_floor_0.geojson")
-floor_1_rooms <- st_read("data/polygons/polygons_floor_1.geojson")
-floor_2_rooms <- st_read("data/polygons/polygons_floor_2.geojson")
+floor_0_rooms <- st_read("../data/polygons/polygons_floor_0.geojson")
+floor_1_rooms <- st_read("../data/polygons/polygons_floor_1.geojson")
+floor_2_rooms <- st_read("../data/polygons/polygons_floor_2.geojson")
 floor_0_rooms <- drop_crs(floor_0_rooms)
 floor_1_rooms <- drop_crs(floor_1_rooms)
 floor_2_rooms <- drop_crs(floor_2_rooms)
@@ -357,7 +357,7 @@ plot_trajectory_density_scatter <- function(trajectory_data, floor_plan,
     coord_sf(expand = FALSE) +
     theme_minimal() +
     theme(
-      plot.title = element_text(hjust = 0.5, size = 12, face = "bold", margin = margin(b = 2)),
+      plot.title = element_text(hjust = 0.5, size = 13, face = "bold", margin = margin(b = 2)),
       axis.text = element_blank(),
       axis.ticks = element_blank(),
       axis.title = element_blank(),
@@ -411,6 +411,7 @@ plot_distance_distributions <- function(metrics_list) {
       y = "Frequency"
     )
 }
+
 ```
 
 ## cv comparison
@@ -637,6 +638,7 @@ metrics_list <- list(floor_0 = metrics_f0, floor_1 = metrics_f1, floor_2 = metri
 ```{r}
 cv_stats <- compare_cv_statistically(metrics_list)
 
+cv_stats$bootstrap_tests$floor_0_vs_floor_1
 # Save the results
 write.csv(cv_stats$cv_summary, "output/cv_summary.csv", row.names = FALSE)
 saveRDS(cv_stats, "output/cv_stats.rds")
@@ -668,7 +670,7 @@ p_cv_boot <- plot_cv_bootstrap_distributions(metrics_list)
 
 # combined scatter density plot
 scatter_density_title <- plot_annotation(
-  title = "Movement Density (Point Scatter)",
+  title = "Movement Density",
   theme = theme(
     plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
     plot.margin = margin(0, 0, 12, 0)
