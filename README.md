@@ -2,13 +2,13 @@
 
 ## Short overall description
 
-This repository contains the data-processing scripts, spatial data, figures and tables used for a Spatial Analytics exam project at Aarhus University created by Zosia Radwanska and Alexandra Ciulisova. The project investigates how the spatial layout of the Nancy Museum of Fine Arts shapes visitor movement patterns across three floors.
+This repository contains the data-processing scripts, spatial data, figures and tables used for a Spatial Analytics exam project at Aarhus University created by Zofia Radwanska and Alexandra Ciulisova. The project investigates how the spatial layout of the Nancy Museum of Fine Arts shapes visitor movement patterns across three floors.
 
 The analysis focuses on three main questions:
 
-1. To what extent do visitors follow similar spatial trajectories within each floor, and does trajectory similarity differ between floors as measured by Frechet distance and coefficient of variation?
-2. Which rooms function as hubs in room transition networks on each floor and to what extent is average room dwell time correlated with room size, spatial connectivity, number of visitors, and number of paintings?
-3. How is room-to-room sequence predictability related to the branching structure of each floor, measured through dominant next-room share, transition entropy, and number of possible next rooms?
+1. To what extent do visitor trajectories show similarity within and across museum floors, as measured through trajectory-based distance metrics?
+2. Which rooms act as hubs in each floor’s room-transition network, and how does dwell time relate to room size, connectivity, visitor volume, and paintings?
+3. How does each floor’s branching structure affect the predictability of visitor room-to-room movement?
 
 The project combines trajectory analysis, room-level spatial annotation, transition network analysis, dwell-time comparison and route predictability measures.
 
@@ -136,4 +136,4 @@ Future versions of the project could improve the analysis by:
 
 ## Authors
 
-Project created by **Zosia Radwanska** and **Alexandra Ciulisova** for the Spatial Analytics course at Aarhus University.
+Project created by **Zofia Radwanska** and **Alexandra Ciulisova** for the Spatial Analytics 2026 course at Aarhus University.
