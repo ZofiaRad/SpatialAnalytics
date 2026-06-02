@@ -5,22 +5,23 @@ output: html_document
 
 # Libraries
 ```{r}
-# loading libraries
-library(tidyverse)
-library(rjson)
-library(jsonlite)
-library(dplyr)
-library(jsonlite)
-library(sf)
-library(purrr)
-library(ggplot2)
-library(tidyr)
-library(scales)
-library(grid)
-library(tibble)
-library(shadowtext)
-library(patchwork)
-library(SpatEntropy)
+library(pacman)
+pacman::p_load(tidyverse,
+               rjson,
+               jsonlite,
+               dplyr,
+               ggplot,
+               sf, 
+               purrr,
+               ggplot2,
+               tidyr,
+               scales,
+               grid,
+               tibble,
+               shadowtext,
+               patchwork,
+               SpatEntropy
+               )
 ```
 
 # Reading data

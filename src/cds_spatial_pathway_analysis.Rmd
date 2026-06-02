@@ -11,8 +11,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 #loading in the packages
 ```{r}
-install.packages("Cairo")
-install.packages("ragg")
 library(pacman)
 pacman::p_load(tidyverse,
                readr,
@@ -23,7 +21,9 @@ pacman::p_load(tidyverse,
                ggdendro,
                stats,
                ggrastr,
-               patchwork)
+               patchwork,
+               Cairo,
+               ragg)
 
 # not using CRS
 sf::sf_use_s2(FALSE)
