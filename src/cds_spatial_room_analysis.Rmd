@@ -20,6 +20,7 @@ library(grid)
 library(tibble)
 library(shadowtext)
 library(patchwork)
+library(SpatEntropy)
 ```
 
 # Reading data
@@ -526,6 +527,25 @@ vars_to_correlate <- nodes %>%
   ) %>%
   names()
 
+
+# get distribution of chosen variables
+nodes %>%
+  select(mean_duration_sec, all_of(vars_to_correlate)) %>%
+  pivot_longer(
+    cols = all_of(vars_to_correlate),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ variable, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of variables to correlate with mean time spent in room",
+    x = "Value",
+    y = "Count"
+  )
+
 # correlating variables with mean time spent in the room using Spearman correlation, which allows us to understand how different factors such as room size, popularity, connectivity, and number of artworks are associated with the average time visitors spend in each room
 mean_time_correlations <- map_dfr(vars_to_correlate, function(var) {
   
@@ -876,15 +896,12 @@ nodes %>%
 # for each room on each floor, calculating the number of different rooms that visitors go to after visiting that room (n_next_rooms), the most common next room and its share among all transitions from that room (dominant_next_room and dominant_share), the entropy of the distribution of next rooms (transition_entropy), and the total number of transitions from that room (total_transitions), which allows us to identify rooms that function as branching points in the transition network, where visitors have multiple different paths they can take after visiting that room
 branching_points <- edges_directed_valid %>%
   group_by(floorNumber, from_room) %>%
-  mutate(
-    total_from_room = sum(transition_count, na.rm = TRUE),
-    p_transition = transition_count / total_from_room
-  ) %>%
   summarise(
     n_next_rooms = n_distinct(to_room),
     dominant_next_room = to_room[which.max(transition_count)],
-    dominant_share = max(p_transition, na.rm = TRUE),
-    transition_entropy = -sum(p_transition * log2(p_transition), na.rm = TRUE),
+    dominant_share = max(transition_count / sum(transition_count, na.rm = TRUE), na.rm = TRUE),
+    transition_entropy = shannon(rep(to_room, times = transition_count))$shann / log(2),
+    transition_entropy_relative = shannon(rep(to_room, times = transition_count))$rel.shann,
     total_transitions = sum(transition_count, na.rm = TRUE),
     .groups = "drop"
   ) %>%
