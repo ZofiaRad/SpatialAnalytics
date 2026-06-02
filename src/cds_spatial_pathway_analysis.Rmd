@@ -166,7 +166,7 @@ calculate_frechet_matrix <- function(trajectories) {
   traj_sfc <- st_sfc(trajectories)
   
   # calculate pairwise distances
-  dist_matrix <- st_distance(traj_sfc, which = "Frechet")
+  dist_matrix <- st_distance(traj_sfc, which = "Frechet") / 100 #original units => pixels where 1 pixel = 100 m
   
   # set rownames and colnames from original trajectory names
   rownames(dist_matrix) <- traj_names
@@ -190,7 +190,7 @@ calculate_variability_metrics <- function(dist_matrix) {
     sd_distance = sd(upper_tri),
     min_distance = min(upper_tri),
     max_distance = max(upper_tri),
-    cv_distance = sd(upper_tri) / mean(upper_tri),  # coefficient of variation
+    cv_distance = (sd(upper_tri) / mean(upper_tri)),  # coefficient of variation
     q25 = quantile(upper_tri, 0.25),
     q75 = quantile(upper_tri, 0.75),
     iqr = IQR(upper_tri),
@@ -381,7 +381,7 @@ plot_distance_distributions <- function(metrics_list) {
     distance = unlist(lapply(metrics_list, function(x) x$all_distances))
   )
   
-  # Convert floor_0 format to Floor 0 for display
+  # convert floor_0 format to Floor 0 for display
   comparison_data$floor_display <- sapply(comparison_data$floor, function(f) {
     paste0("Floor ", substr(f, nchar(f), nchar(f)))
   })
@@ -392,7 +392,7 @@ plot_distance_distributions <- function(metrics_list) {
     floor_2 = unname(palette_loud$floor2["base"])
   )
   
-  ggplot(comparison_data, aes(x = distance, fill = floor)) +
+  ggplot(comparison_data, aes(x = distance, fill = floor)) + 
     geom_histogram(alpha = 0.5, bins = 30, position = "identity") +
     geom_density(alpha = 0.3, linewidth = 1) +
     
@@ -403,11 +403,11 @@ plot_distance_distributions <- function(metrics_list) {
     theme_minimal() +
     theme(
       legend.position = "none",
-      strip.text = element_text(face = "bold")
+      strip.text = element_text(size = 12)
     ) +
     labs(
-      #title = "Distribution of Trajectory Distances per Floor",
-      x = "Fréchet Distance",
+      title = "Distribution of Trajectory Distances per Floor",
+      x = "Fréchet Distance (m)",
       y = "Frequency"
     )
 }
@@ -431,7 +431,7 @@ plot_cv_comparison <- function(metrics_list) {
     ci_upper = cv_ci_upper
   )
   
-  # Map floor names to palette keys (floor_0 -> floor0, floor_1 -> floor1, etc.)
+  # map floor names to palette keys 
   palette_map <- list(
     floor_0 = palette_loud$floor0["base"],
     floor_1 = palette_loud$floor1["base"],
@@ -490,7 +490,7 @@ plot_cv_bootstrap_distributions <- function(metrics_list) {
         cv_diffs[b] <- cv1_boot - cv2_boot
       }
       
-      # Convert floor_0 format to Floor 0 for display
+      # convert floor_0 format to Floor 0 for display
       floor_i_display <- paste0("Floor ", substr(floor_names[i], nchar(floor_names[i]), nchar(floor_names[i])))
       floor_j_display <- paste0("Floor ", substr(floor_names[j], nchar(floor_names[j]), nchar(floor_names[j])))
       comparison_label <- paste0(floor_i_display, " vs ", floor_j_display)
@@ -502,7 +502,7 @@ plot_cv_bootstrap_distributions <- function(metrics_list) {
     }
   }
   
-  # Create palette with matching comparison labels
+  # create palette with matching comparison labels
   palette_loud <- list(
     floor0 = c(dark = "#92113AFF", base = "#C1395EFF"),
     floor1 = c(dark = "#DFA90DFF", base = "#FFD84AFF"),
@@ -639,7 +639,7 @@ metrics_list <- list(floor_0 = metrics_f0, floor_1 = metrics_f1, floor_2 = metri
 cv_stats <- compare_cv_statistically(metrics_list)
 
 cv_stats$bootstrap_tests$floor_0_vs_floor_1
-# Save the results
+# save the results
 write.csv(cv_stats$cv_summary, "output/cv_summary.csv", row.names = FALSE)
 saveRDS(cv_stats, "output/cv_stats.rds")
 ```
@@ -663,6 +663,13 @@ p_density_scatter_f2 <- plot_trajectory_density_scatter(trajectory_f2_filtered, 
 
 # distance distirbution
 p_distributions <- plot_distance_distributions(metrics_list)
+
+ggsave(
+  filename = "../out/figures/distance_distribution.png",
+  plot = p_distributions,
+  width = 10,
+  height = 4
+)
 
 # cv comparison
 p_cv <- plot_cv_comparison(metrics_list)
