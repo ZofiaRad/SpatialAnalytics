@@ -357,16 +357,15 @@ plot_trajectory_density_scatter <- function(trajectory_data, floor_plan,
     coord_sf(expand = FALSE) +
     theme_minimal() +
     theme(
-      plot.title = element_text(hjust = 0.5, size = 12, face = "bold", margin = margin(b = 10)),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold", margin = margin(b = 2)),
       axis.text = element_blank(),
       axis.ticks = element_blank(),
       axis.title = element_blank(),
       panel.grid = element_blank(),
       panel.background = element_blank(),
-      plot.margin = margin(0, 0, 0, 0)
+      plot.margin = margin(1, 1, 1, 1)
     ) +
-    labs(title = paste0("Movement Density (Point Scatter) - ", floor_name),
-         caption = "Darker areas = more overlapping points")
+    labs(title = floor_name)
   
   return(p)
 }
@@ -668,25 +667,24 @@ p_cv <- plot_cv_comparison(metrics_list)
 p_cv_boot <- plot_cv_bootstrap_distributions(metrics_list)
 
 # combined scatter density plot
-combined_plot <- (p_density_scatter_f0 | p_density_scatter_f1 | p_density_scatter_f2) +
-  plot_layout(
-    ncol = 3,
-    widths = c(1, 1, 1)
-  ) +
-  plot_annotation(
-    title = "Movement Density (Point Scatter)",
-    theme = theme(
-      plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
-      plot.margin = margin(0, 0, 10, 0)
-    )
-  ) &
-  theme(
-    plot.margin = margin(0, 2, 0, 2)
+scatter_density_title <- plot_annotation(
+  title = "Movement Density (Point Scatter)",
+  theme = theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.margin = margin(0, 0, 12, 0)
   )
+)
 
+combined_plot <- (
+  p_density_scatter_f0 | p_density_scatter_f1 | p_density_scatter_f2
+) +
+  plot_layout(ncol = 3, widths = c(1, 1, 1)) +
+  scatter_density_title &
+  theme(plot.margin = margin(1, 1, 1, 1))
+```
+
+## Combined scatter density plot
+
+```{r combined-scatter-density-horizontal, fig.width=15, fig.height=5.2, out.width='100%'}
 combined_plot
-
-combined_plot
-
-combined_plot
-
+```
