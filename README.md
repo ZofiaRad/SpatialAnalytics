@@ -131,7 +131,7 @@ Future versions of the project could improve the analysis by:
 - separating stationary viewing time from walking time,
 - including artwork size, period, artist or popularity as additional predictors,
 - adding formal space syntax metrics such as visibility, integration and choice,
-- validating manually annotated room polygons against a more systematic spatial reference,
+- validating manually annotated room polygons against a more systematic spatial reference.
 
 
 ## Authors
